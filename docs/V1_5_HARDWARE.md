@@ -217,6 +217,19 @@ The partition table is left at the board default (8 MB layout). The app is ~0.44
 
 ## 8. Build, verification and results
 
+### Final state (Task 5, after the Octal-flash correction and test diagnostics)
+
+`pio run` on GitHub Actions, run for commit `b029cf6` (annotations):
+
+```
+PLATFORM: Espressif 32 (7.1.3), Arduino core 2.0.17, toolchain-xtensa-esp32s3 8.4.0
+memory config: sdk/esp32s3/opi_opi, bootloader_opi_80m, image header --flash_mode dout --flash_freq 80m --flash_size 32MB
+RAM:   51.7% (169,432 / 327,680 B)     Flash: 13.3% (443,573 / 3,342,336 B)
+compiler warnings: 0
+```
+
+(`dout` in the image header is how Octal-flash images are written: the ROM loads the second-stage bootloader in a mode every flash supports, and the `opi_80m` bootloader then switches to Octal.)
+
 ### Task 4 (display + IMU)
 
 Firmware compile — real `pio run`, on GitHub Actions (`.github/workflows/firmware.yml`, added in Task 4; this sandbox's network blocks the PlatformIO registry, so the build runs in CI on every push touching `firmware/`). Values from the run's annotations:

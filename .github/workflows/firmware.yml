@@ -44,7 +44,7 @@ jobs:
           grep -E '^(RAM|Flash):|SUCCESS|warning:|error:' pio.log || true
           # Sizes + resolved package versions as annotations (visible on the run page and via the API).
           echo "::notice title=firmware size::$(grep -E '^(RAM|Flash):' pio.log | tr -s ' ' | tr '\n' ' ')"
-          echo "::notice title=platform::$(grep -E '^PLATFORM:|framework-arduinoespressif32|toolchain-xtensa' pio.log | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=platform::$(grep -E '^PLATFORM:|^ - (framework-arduinoespressif32|toolchain-xtensa)' pio.log | tr -s ' ' | tr '\n' ' ')"
           # Which memory layout the Arduino core was built against (must be opi_opi for N32R16V).
           echo "::notice title=memory config::$(grep -oE 'sdk/esp32s3/[a-z_]+/include' pio.log | sort -u | tr '\n' ' ') $(grep -oE 'elf2image[^&]*--flash_mode [a-z]+[^&]*--flash_size [0-9A-Z]+' pio.log | grep -oE -- '--flash_(mode|freq|size) [0-9a-zA-Z]+' | sort -u | tr '\n' ' ') $(grep -oE 'bootloader[_a-z0-9]*\.(elf|bin)' pio.log | sort -u | tr '\n' ' ')"
           echo "::notice title=libraries::$(grep -E '^\|-- ' pio.log | tr -s ' ' | tr '\n' ' ')"
