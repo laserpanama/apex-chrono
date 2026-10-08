@@ -24,6 +24,7 @@ import { compileTrack } from "./track.ts";
 import { geoTrackFromSynthetic } from "./synthetic.ts";
 import { parseTrackFile } from "./track-file.ts";
 import { parseRecording, replayRecording, type ReplayWarning } from "./recording.ts";
+import { recordingStats } from "./recording-stats.ts";
 import { formatLap } from "../timer/engine.ts";
 
 const fmtT = (t: number) => t.toFixed(3);
@@ -93,6 +94,21 @@ function main() {
   const durS = n ? (maxT - minT) / 1000 : 0;
   console.log(`rows parsed: ${n}  session ${durS.toFixed(1)} s`);
   for (const w of r.warnings) console.log(`  warning: ${warnLine(w)}`);
+
+  // Receiver health (test procedure §6 10 Hz, §10 stationary)
+  const st = recordingStats(r.rows);
+  const f1 = (x: number) => (Number.isFinite(x) ? x.toFixed(1) : "—");
+  const f2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "—");
+  console.log("\nreceiver:");
+  console.log(
+    `  rate: ${f2(st.rateHz)} Hz  intervals at 100±10 ms: ${(st.nominalIntervalShare * 100).toFixed(2)}%  max interval: ${st.maxIntervalMs} ms  duplicates: ${st.duplicates}  backwards: ${st.backwards}`,
+  );
+  console.log(
+    `  satellites min/median: ${st.satsMin}/${st.satsMedian}  HDOP median/p95: ${f2(st.hdopMedian)}/${f2(st.hdopP95)}  no-fix rows: ${st.noFixRows}`,
+  );
+  console.log(
+    `  longest stationary run (< 2 km/h): ${st.stationaryRows} rows, ${f1(st.stationaryDurationS)} s, position p95 ${Number.isFinite(st.stationaryP95M) ? `${f2(st.stationaryP95M)} m` : "— (needs ≥ 50 rows)"}`,
+  );
 
   // Quality stats
   const rej = r.stats.rejected;

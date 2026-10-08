@@ -17,7 +17,9 @@
 //   APEX_CHRONO,V1.5,BOOT,...     once, peripheral bring-up result
 //   IMU,...                       once, BMI270 init + communication test detail
 //   EVT,...                       timing events (unchanged from V1)
-//   STAT,...                      once per second, health snapshot
+//   STAT,...                      once per second, health snapshot:
+//                                 nmea_* = raw UART health (works before a lock),
+//                                 gnss_hz = fixes/s, sd/imu/display state, IMU sample
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -53,6 +55,7 @@ static uint32_t lastDisplayMs = 0;
 static uint32_t lastStatMs = 0;
 static uint32_t fixesAtLastStat = 0;
 static uint32_t imuSamplesAtLastStat = 0;
+static uint32_t nmeaOkAtLastStat = 0;
 static int gnssHz = 0;
 static int imuHz = 0;
 
@@ -212,6 +215,9 @@ void loop() {
     const uint32_t fixes = gnss.fixesSeen();
     const uint32_t imuSamples = imu.core().samples();
     gnssHz = static_cast<int>((fixes - fixesAtLastStat) * 1000UL / dt);
+    const uint32_t nmeaOk = gnss.nmeaSentencesOk();
+    const int nmeaHz = static_cast<int>((nmeaOk - nmeaOkAtLastStat) * 1000UL / dt);
+    nmeaOkAtLastStat = nmeaOk;
     imuHz = static_cast<int>((imuSamples - imuSamplesAtLastStat) * 1000UL / dt);
     fixesAtLastStat = fixes;
     imuSamplesAtLastStat = imuSamples;
@@ -220,10 +226,13 @@ void loop() {
     apex::fillTiming(timer.engine(), sectors, timer.trackReady(), gnssView, st);
     const apex::ImuSample& s = imu.core().latest();
     Serial.printf(
-        "STAT,ms=%lu,fixes=%lu,gnss_hz=%d,lock=%d,sats=%d,hdop=%.2f,timing=%s,lap=%d,sector=%d/%d,"
+        "STAT,ms=%lu,nmea_chars=%lu,nmea_ok=%lu,nmea_bad=%lu,nmea_hz=%d,fixes=%lu,gnss_hz=%d,lock=%d,sats=%d,hdop=%.2f,"
+        "timing=%s,lap=%d,sector=%d/%d,"
         "sd=%s,rows=%lu,sd_fail=%lu,imu=%s,imu_hz=%d,imu_fail=%lu,ax=%.2f,ay=%.2f,az=%.2f,gx=%.2f,gy=%.2f,gz=%.2f,"
         "disp_us=%lu,disp_max_us=%lu\n",
-        static_cast<unsigned long>(now), static_cast<unsigned long>(fixes), gnssHz, st.gnssLock, st.sats,
+        static_cast<unsigned long>(now), static_cast<unsigned long>(gnss.nmeaChars()),
+        static_cast<unsigned long>(nmeaOk), static_cast<unsigned long>(gnss.nmeaChecksumErrors()), nmeaHz,
+        static_cast<unsigned long>(fixes), gnssHz, st.gnssLock, st.sats,
         std::isfinite(st.hdop) ? st.hdop : 99.9, timingName(st.timing), st.lapNumber, st.sector, st.sectorCount,
         sdName(sdStatus()), static_cast<unsigned long>(sd.rowsLogged()), static_cast<unsigned long>(sd.failures()),
         apex::imuStateName(imu.state()), imuHz, static_cast<unsigned long>(imu.core().readFailures()), s.ax, s.ay,

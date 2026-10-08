@@ -54,6 +54,13 @@ class GnssDriver {
 
   uint32_t fixesSeen() const { return fixesSeen_; }
 
+  // Raw UART health, valid with or without a satellite lock (the receiver
+  // sends GGA/RMC with empty fields before it has a fix). Used by the 1 Hz
+  // STAT line to tell "UART dead / wrong baud" from "no sky view yet".
+  uint32_t nmeaChars() const { return gps_.charsProcessed(); }
+  uint32_t nmeaSentencesOk() const { return gps_.passedChecksum(); }
+  uint32_t nmeaChecksumErrors() const { return gps_.failedChecksum(); }
+
  private:
   void configureReceiver(int rxPin, int txPin);
   void ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len);
