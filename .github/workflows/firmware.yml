@@ -22,7 +22,10 @@ jobs:
           node-version: 22
 
       - name: Host tests (parity + display/IMU)
-        run: npm run firmware:test
+        run: |
+          set -o pipefail
+          npm run firmware:test | tee host-tests.log
+          echo "::notice title=host tests::$(grep -E '^(PASS|FAIL) ' host-tests.log | tr '\n' ' ')"
 
       - uses: actions/setup-python@v5
         with:
@@ -35,5 +38,12 @@ jobs:
 
       - name: PlatformIO build (esp32-s3-devkitc-1, N32R16V overrides)
         run: |
+          set -o pipefail
           pip install -q platformio
-          cd firmware && pio run
+          cd firmware && pio run | tee pio.log
+          # Sizes + resolved package versions as annotations (visible on the run page and via the API).
+          echo "::notice title=firmware size::$(grep -E '^(RAM|Flash):' pio.log | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=platform::$(grep -E '^PLATFORM:|framework-arduinoespressif32|toolchain-xtensa' pio.log | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=libraries::$(grep -E '^\|-- ' pio.log | tr -s ' ' | tr '\n' ' ')"
+          OWN=$(grep 'warning:' pio.log | grep -E '(lib/apex_|src/main|include/pins)' | sort -u | head -5 | tr '\n' ' ' || true)
+          echo "::notice title=compiler warnings::total=$(grep -c 'warning:' pio.log || true) own_code=[${OWN}]"

@@ -1,4 +1,4 @@
-# Apex Chrono V1.5 — ESP32-S3 hardware layer (Task 3)
+# Apex Chrono V1.5 — ESP32-S3 hardware layer (Tasks 3–4)
 
 Target hardware for the first physical prototype:
 
@@ -8,7 +8,7 @@ Target hardware for the first physical prototype:
 - **Storage**: microSD, SPI
 - **IMU**: BMI270, I2C
 
-This task adds the firmware's hardware abstraction layer: clean interfaces for GNSS, Storage, Display, IMU and Timer, one authoritative pin map, GNSS UART handling with hardware timestamps, and SD logging using the Task 2 raw CSV contract. `firmware/lib/apex_timing/apex_timing.h` (the timing engine) is **unchanged** — this task is wiring, not timing logic.
+Task 3 added the firmware's hardware abstraction layer: clean interfaces for GNSS, Storage, Display, IMU and Timer, one authoritative pin map, GNSS UART handling with hardware timestamps, and SD logging using the Task 2 raw CSV contract. Task 4 added the minimum V1.5 display (§5) and BMI270 IMU (§6) functionality. `firmware/lib/apex_timing/apex_timing.h` (the timing engine) is **unchanged** in both — this is wiring and observers, not timing logic. The browser cockpit (`src/`) is unchanged.
 
 ## 1. Pin map (authoritative)
 
@@ -83,14 +83,14 @@ This was **exercised, not just written**: as part of this task I temporarily set
 | --------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | GNSS            | `firmware/lib/apex_gnss/GnssDriver.{h,cpp}`    | HardwareSerial(1), TinyGPSPlus, u-blox UBX config, contract-row + `apex::GnssFix` production            |
 | Storage         | `firmware/lib/apex_storage/SdLogger.{h,cpp}`   | microSD, session file lifecycle, contract CSV writing                                                   |
-| Display         | `firmware/lib/apex_display/Display.{h,cpp}`    | ST7789 init + a plain-text status panel                                                                 |
-| IMU             | `firmware/lib/apex_imu/Imu.{h,cpp}`            | I2C wiring/presence check, raw register readback                                                        |
-| Timer           | `firmware/lib/apex_timer/TimerService.{h,cpp}` | `apex::Track` + `apex::LapEngine` orchestration, track-file parsing                                     |
+| Display         | `firmware/lib/apex_display/Display.{h,cpp}`, `DisplayModel.h` | ST7789 320×240 status panel; `DisplayModel.h` = what is shown (pure, host-tested), `Display.cpp` = partial-redraw painter |
+| IMU             | `firmware/lib/apex_imu/Imu.{h,cpp}`, `ImuCore.h` | BMI270 via Bosch Sensor API; `ImuCore.h` = states, comm test, conversion, timestamps, `ImuSink` (pure, host-tested) |
+| Timer           | `firmware/lib/apex_timer/TimerService.{h,cpp}`, `TimingView.h` | `apex::Track` + `apex::LapEngine` orchestration, track-file parsing; `TimingView.h` = read-only engine → display status (incl. current sector) |
 | Shared contract | `firmware/lib/apex_contract/GnssContractRow.h` | `ContractRow`/`SessionDate` POD + `formatContractRow()` — the C++ mirror of `src/lib/gnss/recording.ts` |
 
-`main.cpp` is now a thin orchestrator: it owns one instance of each module and wires `GnssDriver.poll()` → `SdLogger.logRow()` (observer) and → `TimerService.pushFix()` (critical path), then separately throttles `Imu.readRaw()` (~20 Hz) and `Display.showStatus()` (~5 Hz). No module reaches into another's internals; `TimerService` is the only thing that touches `apex::LapEngine`.
+`main.cpp` is a thin orchestrator: it owns one instance of each module and wires `GnssDriver.poll()` → `SdLogger.logRow()` (observer) and → `TimerService.pushFix()` (critical path). After the fixes available in that loop iteration are timed, it runs the observers: `Imu.poll()` (self-throttled to half the 100 Hz ODR), `Display.show()` (5 Hz) and a 1 Hz `STAT` serial line. No module reaches into another's internals; `TimerService` is the only thing that touches `apex::LapEngine`, and `TimingView.h` only reads it.
 
-**No changes to `apex_timing.h`.** The status panel's needs (phase, current lap, last lap, best lap, live delta) are all already exposed by `LapEngine`'s existing public API (`inLapNow()`, `currentLapNumber()`, `lapStartTime()`, `lastLap()`, `bestLap`/`haveBest`) — no new engine surface was required, so the frozen, host-parity-tested engine file has zero diff this task.
+**No changes to `apex_timing.h`.** The status panel's needs (phase, current lap, lap time, last lap, best lap) are exposed by `LapEngine`'s existing public API (`inLapNow()`, `currentLapNumber()`, `lapStartTime()`, `lastLap()`, `bestLap`/`haveBest`). The one thing it keeps private is the next expected gate, needed for "current sector"; `TimingView.h`'s `SectorTracker` mirrors it exactly from the engine's own `LapStart`/`Sector` events (the only places the engine changes it), so the frozen, host-parity-tested engine file still has zero diff.
 
 ## 3. GNSS UART handling and hardware timestamps
 
@@ -118,24 +118,86 @@ The V1 firmware hardcoded `fixType = 3` whenever a location was valid, so the qu
 
 `main.cpp`'s loop calls `sd.logRow(row, date)` **before** `timer.pushFix(fix, ev)`, but `SdLogger` is a value-less observer: `logRow()` returns `void`, nothing about its outcome is inspected by the caller, and every I/O path inside it (`SD.begin()` failing, `SD.open()` failing, `file_.write()` returning short) is checked and absorbed internally rather than retried in a loop or blocked on. A missing card never even opens a file (`cardPresent_` stays false and `logRow()` becomes a single boolean check-and-return). A card that fails mid-session gives up after 10 consecutive failures and goes quiet. In both cases `timer.pushFix()` on the next line is reached unconditionally, every loop iteration, regardless of what `sd.logRow()` just did.
 
-## 5. Display — minimum required functionality only
+## 5. Display (Task 4) — ST7789 2", 320×240
 
-`Display` draws five plain-text lines (GNSS fix/sats/HDOP, lap number + elapsed, last lap + best lap, SD status, IMU status) at a throttled ~5 Hz. This is explicitly **not** a V2 telemetry dashboard — no track map, no graphics, no g-force gauges.
+The panel is initialised in its native portrait 240×320 and rotated to landscape (`kRotation = 1`; use 3 if it reads upside down in the enclosure). Classic 6×8 font, scaled.
 
-**Honest limitation**: the ST7789 wiring here is write-only (no MISO/readback), which is normal for these breakouts but means there is no reliable way to electrically prove the panel is present and responding before writing to it. `Display::begin()` therefore reports success optimistically once `init()` returns without hanging. The resilience guarantee this task actually provides is architectural, not electrical: `Display` is a stateless function of a status snapshot, called strictly after GNSS/storage/timer work for that loop iteration is already done, so even a fully dead or unplugged panel degrades to "no display," never to "no timing." This will be confirmed (or falsified) the first time real hardware is powered up with a deliberately disconnected panel — that physical test has not happened yet.
+| y (px) | Size | Example | Field |
+| --- | --- | --- | --- |
+| 4 | 2 | `FIX    SAT 12 HDOP 0.8` | GNSS lock · satellites · HDOP |
+| 26 | 2 | `TIMING` | Timing status |
+| 52 | 5 | `1:23.4` | Lap time (current lap, live) |
+| 100 | 3 | `LAP 4        S2/3` | Current lap · sector |
+| 130 | 3 | `LAST 1:23.456` (`X` + red if invalid) | Last lap |
+| 162 | 2 | `BEST 1:22.901` | Best lap (extra) |
+| 190 | 2 | `SD LOG 1234` | SD status |
+| 214 | 2 | `IMU OK 100HZ` | IMU status (extra) |
 
-## 6. IMU — presence check only, not full bring-up (by design)
+Definitions:
 
-**This is the one place this task deliberately does less than a "complete" driver, and the reason is worth being explicit about.** The BMI270 requires Bosch's proprietary ~8 KB `config_file` binary blob to be uploaded over the bus before the accelerometer/gyroscope data registers produce characterized output — this is documented Bosch behaviour (the chip stays in a config/standby state otherwise), not a guess. That blob is **not** reproduced in this firmware: hand-transcribing ~8 KB of vendor binary from memory risks a silent transcription error, and a wrong blob can still "successfully" write and produce plausible-looking garbage instead of failing loudly — which is worse than reading nothing.
+- **GNSS lock**: newest fix has GGA quality ≥ 1 (contract `fixType` ≥ 2) and is not older than 2 s of MCU time. A receiver that goes quiet shows `NO FIX` within 2 s.
+- **Timing status**: `NO TRACK LOADED` (no track sent yet, fixes are logged but not timed) → `WAITING GNSS LOCK` → `READY - CROSS START` (locked, no lap running yet) → `TIMING` (a lap is running).
+- **Sector**: 1-based sector of the running lap, shown only while timing and only when the track has sector lines. With *n* gates (start/finish + *n*−1 sector lines) there are *n* sectors.
+- **SD status**: `SD NO CARD` (mount failed at boot) · `SD READY` (mounted, file opens on the first fix) · `SD LOG <rows>` (`ERR <n>` added and red after any failed write) · `SD FAILED` (gave up after 10 consecutive failures).
 
-What `Imu` **does** implement and is real:
+What is shown is decided in `DisplayModel.h` — pure C++, no Arduino — and checked by `firmware/test_host/hw_test.cpp`: exact text for every field, worst-case values still fit their line width, and no two lines overlap on 320×240. `Display.cpp` only paints.
 
-- I2C bring-up at the documented default pins (SDA 8, SCL 9), probing address `0x68` then `0x69` (BMI270's SDO-pin-selectable addresses)
-- `CHIP_ID` register (`0x00`) readback, checked against the documented value `0x24`
-- A soft reset (`CMD` register `0x7E` ← `0xB6`) followed by a post-reset `CHIP_ID` re-check
-- Raw register readback (`readRaw()`) from the documented accelerometer/gyroscope data registers (`0x0C`–`0x17`), explicitly marked as uncharacterized diagnostic data, never consumed by any decision in this firmware
+### Rendering cost and why the GNSS UART buffer grew
 
-This is enough to prove the physical I2C wiring is correct on the real board — the actual goal of a "first physical prototype" bring-up — without fabricating sensor behaviour. Loading the real Bosch config blob (via a vetted driver, e.g. Bosch's own BMI270-Sensor-API) is deferred to whenever IMU data is actually consumed by a feature, which is V2 telemetry and out of scope here. **IMU failure (missing chip, wrong ID, I2C NACK) never stops timing**: `Imu::begin()` returning `false` just leaves it inert for the whole session; `main.cpp` only calls `readRaw()` when `imu.ok()` is true, and its result is discarded either way.
+The Task 3 panel cleared the whole screen (320×240×2 B ≈ 150 KB of SPI) on every 5 Hz refresh. At typical SPI clocks that is tens of milliseconds per frame, during which the 256-byte default UART RX buffer (≈170 ms of GGA+RMC at 10 Hz) fills. Task 4:
+
+- clears the screen once at boot; after that each refresh repaints **only lines whose text or colour changed**, drawing glyphs with a background colour and padding to line width (no flicker, no full clear). In practice that is the lap-time line every frame plus an occasional other line.
+- sets the panel SPI clock to 40 MHz (`kSpiHz` in `Display.cpp`; drop to 27 MHz if long jumper wires show noise).
+- measures every refresh: `disp_us` / `disp_max_us` in the 1 Hz `STAT` line, so the physical test can confirm the budget.
+- raises the GNSS UART RX buffer to 4 KB (`kRxBufferBytes` in `GnssDriver.cpp`, ≈2.7 s of NMEA). Fix timestamps come from the receiver, so a late loop iteration costs nothing in accuracy as long as bytes aren't dropped.
+
+### Failure behaviour
+
+The ST7789 link is write-only (no MISO), so a missing or dead panel cannot be detected electrically; SPI writes to nothing still complete in bounded time. `Display` runs after timing work, its return value is only a duration for diagnostics, and nothing reads it. Worst case is "no picture", never "no timing" — to be confirmed physically with the panel unplugged (test procedure §8).
+
+## 6. IMU (Task 4) — BMI270 initialisation, communication test, samples
+
+### Initialisation
+
+The BMI270 needs Bosch's ~8 KB config file uploaded before its accelerometer and gyroscope outputs mean anything. Task 3 deliberately did not hand-type that blob. Task 4 uses **Bosch's own BMI270 Sensor API (v2.86.1, BSD-3)**, which carries the config file, as shipped inside the `sparkfun/SparkFun BMI270 Arduino Library` package (`platformio.ini`). Only the Bosch C API is called; SparkFun's C++ wrapper is not used because its I2C read ignores short reads. `Imu.cpp` provides its own I2C callbacks that reject a short read instead of passing partial data on.
+
+Sequence (`Bmi270Backend::init`):
+
+1. I2C at 400 kHz, 10 ms bus timeout (a missing chip costs milliseconds, not a hang).
+2. Probe `CHIP_ID` (reg `0x00`) at `0x68`, then `0x69`. Nothing answers → **not found**. Answer ≠ `0x24` → **wrong chip**.
+3. `bmi270_init()`: soft reset, config file upload, `INTERNAL_STATUS` check.
+4. Accelerometer: 100 Hz, ±8 g, normal/avg4, performance mode. Gyroscope: 100 Hz, ±500 °/s, normal mode, performance filter.
+5. Enable both sensors. Any Bosch API error in 3–5 → **init failed** (code printed as `bosch=` on the `IMU,` boot line).
+
+### Communication test
+
+`CHIP_ID` only proves something answers. After init, `ImuCore` reads 5 bursts, one ODR period apart, and passes only if: all 5 reads succeed, accel and gyro data-ready flags were seen, the chip's sensor time strictly advanced read to read, and at least one raw axis changed (a live MEMS always has noise; a frozen register file does not). It also reports |a| in g; 0.7–1.3 g sets `gravity_ok=1` but never fails the test (the board may not be still at power-up). Result on serial at boot:
+
+```
+IMU,state=running,addr=0x68,chip=0x24,bosch=0,comm_reads=5,fresh_acc=5,fresh_gyr=5,time_adv=1,not_stuck=1,mag_g=1.002,gravity_ok=1,acc_range_g=8,gyr_range_dps=500,odr_hz=100
+```
+
+### Samples and timestamps
+
+`ImuSample`: acceleration in m/s² (x, y, z), angular rate in °/s (x, y, z), in the **chip's own axis frame** (no mounting remap in V1.5), plus:
+
+- `mcuUs` — ESP32 `esp_timer` microseconds when the read completed. Same clock as `millis()`, i.e. the GNSS rows' `mcu_ms`, so a future logger can line IMU samples up with GNSS fixes.
+- `sensorTimeUs` — the BMI270's own 24-bit `SENSORTIME` (39.0625 µs/tick, wraps every ≈655 s), unwrapped to 64 bits so it is monotonic for the whole session.
+- `seq`, and data-ready flags per sensor.
+
+The main loop polls at most twice per ODR period and keeps a sample only when the data-ready flags say it is new, so the effective rate is the 100 Hz ODR (reported as `imu_hz` in `STAT` and on the display).
+
+### Interface for future logging
+
+`ImuSink` (one virtual `onImuSample()`), set with `imu.setSink(...)`. `ImuRing<N>` is a ready overwrite-oldest ring implementing it, with a drop counter, for a future SD writer to drain in batches. V1.5 does **not** write IMU data to SD: the on-card format is a V2 decision and is not invented here.
+
+### Failure behaviour
+
+States: `not_found`, `wrong_chip`, `init_failed`, `comm_test_failed` (all at boot: IMU stays off, display `IMU --`), `running`, and `failed` (10 consecutive read errors during the session: display `IMU FAILED`, and the bus is never touched again). Nothing in the timing path reads IMU data.
+
+### Not in V1.5 (by request)
+
+No sensor fusion, orientation, calibration, mounting-axis remap, g-force display or telemetry analysis. INT1 (GPIO 21) stays wired and unused; reading is polled.
 
 ## 7. The N32R16V board configuration
 
