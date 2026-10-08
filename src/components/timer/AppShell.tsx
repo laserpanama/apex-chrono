@@ -182,12 +182,12 @@ function Dash({ deltaTone }: { deltaTone: string }) {
           </p>
           <p className="mt-2 text-sm text-muted">
             Max <span className="num text-fg">{formatSpeed(s.maxSpeedKmh)}</span>
-            <span className="mx-2 text-dim">\u00b7</span>
-            Hdg <span className="num text-fg">{Math.round(s.heading)}\u00b0</span>
+            <span className="mx-2 text-dim">·</span>
+            Hdg <span className="num text-fg">{Math.round(s.heading)}°</span>
           </p>
         </div>
         <div className="bezel rounded-lg p-4">
-          <p className="label text-xs text-muted">GPS \u00b7 BN-880 sim</p>
+          <p className="label text-xs text-muted">GPS · BN-880 sim</p>
           <div className="mt-2 flex items-end justify-between">
             <p className="num text-3xl text-fg">
               {s.sats}
@@ -198,7 +198,7 @@ function Dash({ deltaTone }: { deltaTone: string }) {
             </p>
           </div>
           <p className="num mt-1 text-sm text-muted">
-            10 Hz \u00b7 HDOP {s.hdop.toFixed(2)}
+            10 Hz · HDOP {s.hdop.toFixed(2)}
           </p>
           <p className="num mt-2 text-xs text-dim">
             {s.lat.toFixed(6)} , {s.lon.toFixed(6)}
@@ -218,7 +218,7 @@ function Dash({ deltaTone }: { deltaTone: string }) {
         <div className="mb-2 flex items-center justify-between">
           <p className="label text-xs text-muted">Sectors</p>
           <p className="label text-xs text-amber">
-            S{s.sectorIndex + 1} \u00b7 {formatLap(s.armed ? s.sectorClock : null)}
+            S{s.sectorIndex + 1} · {formatLap(s.armed ? s.sectorClock : null)}
           </p>
         </div>
         <ul className="grid gap-2 sm:grid-cols-3">
@@ -232,7 +232,7 @@ function Dash({ deltaTone }: { deltaTone: string }) {
               <p className="label text-[11px] text-muted">
                 S{sec.id} {sec.name}
               </p>
-              <p className="num text-xl text-fg">{sec.timeS == null ? "\u2014" : sec.timeS.toFixed(3)}</p>
+              <p className="num text-xl text-fg">{sec.timeS == null ? "—" : sec.timeS.toFixed(3)}</p>
               <p className={`num text-xs ${tone(sec.deltaS)}`}>{formatDelta(sec.deltaS)}</p>
             </li>
           ))}
@@ -358,7 +358,7 @@ function LogScreen() {
     <section className="grid gap-3 lg:grid-cols-[1fr_18rem]">
       <div className="bezel overflow-hidden rounded-lg">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <p className="label text-xs text-muted">MicroSD stream \u00b7 10 Hz</p>
+          <p className="label text-xs text-muted">MicroSD stream · 10 Hz</p>
           <p className="num text-sm text-fg">{s.log.length} samples</p>
         </div>
         {rows.length === 0 ? (
@@ -379,7 +379,7 @@ function LogScreen() {
       <div className="bezel flex flex-col gap-3 rounded-lg p-4">
         <p className="label text-xs text-muted">Session file</p>
         <p className="text-sm text-fg">
-          CSV holds GNSS samples and closed laps \u2014 the same columns a V1 MicroSD logger would write.
+          CSV holds GNSS samples and closed laps — the same columns a V1 MicroSD logger would write.
         </p>
         <button
           type="button"
@@ -394,9 +394,9 @@ function LogScreen() {
 }
 
 const BOM = [
-  { part: "ESP32-S3 + 3.5\\" 320\u00d7480", cost: "25\u201331", note: "Display, flash, PSRAM, touch" },
-  { part: "BN-880 GNSS 10 Hz", cost: "10\u201315", note: "Position, speed, sats" },
-  { part: "12V\u21925V 3A buck", cost: "~8", note: "V1 prototype power" },
+  { part: "ESP32-S3 + 3.5\" 320×480", cost: "25–31", note: "Display, flash, PSRAM, touch" },
+  { part: "BN-880 GNSS 10 Hz", cost: "10–15", note: "Position, speed, sats" },
+  { part: "12V→5V 3A buck", cost: "~8", note: "V1 prototype power" },
   { part: "32 GB microSD", cost: "~6", note: "Session logs" },
   { part: "Fuse + holder", cost: "~3", note: "Inline protection" },
   { part: "Wiring / connectors", cost: "~6", note: "Vehicle install" },
@@ -408,11 +408,11 @@ function BuildScreen() {
   return (
     <section className="grid gap-3 lg:grid-cols-2">
       <article className="bezel rounded-lg p-4 sm:p-5">
-        <p className="label text-xs text-amber">V1 \u00b7 prove the chain</p>
+        <p className="label text-xs text-amber">V1 · prove the chain</p>
         <h2 className="font-display mt-1 text-3xl leading-none text-fg">How fast was the lap?</h2>
         <p className="mt-3 text-sm leading-relaxed text-muted">
           GPS into the ESP32-S3, start/finish detection, lap and sector times on the 3.5" dash, CSV on
-          MicroSD. Target about $90 delivered to Miami, $100 ceiling. This preview is that firmware\u2019s
+          MicroSD. Target about $90 delivered to Miami, $100 ceiling. This preview is that firmware’s
           cockpit, driven by a simulated 10 Hz fix.
         </p>
         <ol className="mt-4 space-y-2 text-sm text-fg">
@@ -444,13 +444,13 @@ function BuildScreen() {
           ))}
         </ul>
         <p className="mt-3 text-sm text-muted">
-          Parts ~$70\u201381 \u00b7 ship ~$10\u201315 \u00b7 working target <span className="text-fg">$90</span>.
+          Parts ~$70–81 · ship ~$10–15 · working target <span className="text-fg">$90</span>.
         </p>
       </article>
       <article className="bezel rounded-lg p-4 sm:p-5 lg:col-span-2">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="label text-xs text-signal">V2 \u00b7 why the lap changed</p>
+            <p className="label text-xs text-signal">V2 · why the lap changed</p>
             <h2 className="font-display mt-1 text-3xl leading-none text-fg">Where time was made or lost</h2>
           </div>
           <button
@@ -462,13 +462,13 @@ function BuildScreen() {
           </button>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <Roadmap k="V1" d="$85\u2013100" t="GPS lap timer. Prove detection, display, logging." />
-          <Roadmap k="V1.5" d="$120\u2013160" t="Track box: better power, antenna, IMU, mounts." />
-          <Roadmap k="V2" d="$160\u2013200" t="IMU, live delta, sectors, braking and corner story." />
+          <Roadmap k="V1" d="$85–100" t="GPS lap timer. Prove detection, display, logging." />
+          <Roadmap k="V1.5" d="$120–160" t="Track box: better power, antenna, IMU, mounts." />
+          <Roadmap k="V2" d="$160–200" t="IMU, live delta, sectors, braking and corner story." />
         </div>
         <p className="mt-4 flex items-start gap-2 text-sm text-muted">
           <Timer size={16} className="mt-0.5 shrink-0 text-amber" />
-          Do not start at V2. Run V1 on a real lap, then spend the next dollars on GNSS, IMU, and power \u2014 not a bigger screen.
+          Do not start at V2. Run V1 on a real lap, then spend the next dollars on GNSS, IMU, and power — not a bigger screen.
         </p>
       </article>
     </section>
@@ -532,9 +532,9 @@ function SensorScreen() {
         <div className="bezel rounded-lg p-4">
           <p className="label text-xs text-muted">Gyroscope</p>
           <ul className="mt-3 grid gap-3 sm:grid-cols-3 sm:gap-4">
-            <Gyro k="Yaw" hint="Rate" v={yaw} unit="\u00b0/s" />
-            <Gyro k="Roll" hint="From lateral G" v={roll} unit="\u00b0" />
-            <Gyro k="Pitch" hint="From long G" v={pitch} unit="\u00b0" />
+            <Gyro k="Yaw" hint="Rate" v={yaw} unit="°/s" />
+            <Gyro k="Roll" hint="From lateral G" v={roll} unit="°" />
+            <Gyro k="Pitch" hint="From long G" v={pitch} unit="°" />
           </ul>
         </div>
       </div>
@@ -613,7 +613,7 @@ function signed(v: number, digits: number) {
   if (!Number.isFinite(v)) return "0";
   const body = Math.abs(v).toFixed(digits);
   if (Math.abs(v) < 0.005) return body;
-  return `${v > 0 ? "+" : "\u2212"}${body}`;
+  return `${v > 0 ? "+" : "−"}${body}`;
 }
 
 function StatusPills() {
