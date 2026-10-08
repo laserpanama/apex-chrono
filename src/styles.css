@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Barlow", "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Barlow Condensed", "Arial Narrow", Impact, sans-serif;
+  --font-mono: "Share Tech Mono", "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-bg: #0c0d0f;
+  --color-bg-2: #101216;
+  --color-panel: #16181c;
+  --color-panel-2: #1c1f25;
+  --color-line: #2a2e36;
+  --color-line-strong: #3a404a;
+  --color-fg: #e8e4dc;
+  --color-muted: #8d938c;
+  --color-dim: #5c635c;
+  --color-amber: #e8a317;
+  --color-amber-dim: #a87410;
+  --color-signal: #3dba6a;
+  --color-signal-dim: #1e6b3c;
+  --color-delta: #e24b3b;
+  --color-delta-dim: #8a2c22;
+  --color-ink: #0c0d0f;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background:
+      radial-gradient(1200px 500px at 80% -10%, rgb(232 163 23 / 0.07), transparent 55%),
+      var(--color-bg);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+}
+
+@layer utilities {
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .label {
+    font-family: var(--font-display);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .bezel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    box-shadow: var(--shadow-inset);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
