@@ -1,7 +1,8 @@
 #pragma once
 // Apex Chrono V1.5 — authoritative ESP32-S3 hardware pin map.
 //
-// Target: ESP32-S3-DevKitC-1 N32R16V (32 MB QIO flash, 16 MB Octal PSRAM),
+// Target: ESP32-S3-DevKitC-1 N32R16V = ESP32-S3-WROOM-2-N32R16V (32 MB Octal
+// flash, 16 MB Octal PSRAM, VDD_SPI 1.8 V),
 // BN-880Q 10 Hz GNSS, ST7789 2" SPI display + microSD, BMI270 IMU.
 //
 // This is the ONLY place GPIO numbers are assigned in this firmware. Every
@@ -13,11 +14,11 @@
 //   0, 3, 45, 46    strapping pins (boot mode / BOOT button, JTAG select,
 //                   VDD_SPI voltage select, ROM log verbosity)
 //   19, 20          native USB D-/D+ (wired to the onboard "USB" connector)
-//   26-32           Quad SPI flash — reserved on every ESP32-S3 module with
-//                   embedded flash, regardless of size
-//   33-37           Octal PSRAM — reserved ONLY because N32R16V uses Octal
-//                   PSRAM (16 MB is only available as Octal); these pins are
-//                   not broken out to the header on this module variant
+//   26-32           SPI flash/PSRAM bus — reserved on every ESP32-S3 module
+//   33-37           upper octal data lines + DQS — used by the Octal flash and
+//                   Octal PSRAM of the WROOM-2 module; not broken out on it
+//   47              1.8 V I/O on WROOM-2 (VDD_SPI is 1.8 V, which also powers
+//                   GPIO47/48) — not a 3.3 V spare; reserved
 //   38, 48          onboard addressable RGB LED — board-revision dependent
 //                   position (GPIO38 on DevKitC-1 v1.1, GPIO48 on v1.0);
 //                   both reserved so the map is revision-proof
@@ -72,7 +73,7 @@ constexpr int IMU_INT1 = 21;  // data-ready interrupt line; wired but UNUSED by
 
 // ── Spare / expansion — NOT wired by V1.5 firmware. Free for a start
 //    button, buzzer, a future GNSS PPS input, CAN transceiver, etc.:
-//    14, 15, 16, 39, 40, 41, 42, 47
+//    14, 15, 16, 39, 40, 41, 42   (47 is NOT spare on WROOM-2: 1.8 V I/O)
 
 // ───────────────────────── compile-time verification ─────────────────────────
 constexpr int kActive[] = {GNSS_RX, GNSS_TX,          //
@@ -85,8 +86,9 @@ constexpr int kReserved[] = {
     0, 3, 45, 46,                                   // strapping
     19, 20,                                         // native USB
     26, 27, 28, 29, 30, 31, 32,                      // quad SPI flash
-    33, 34, 35, 36, 37,                              // octal PSRAM (N32R16V)
-    38, 48,                                          // onboard RGB LED (rev-dependent)
+    33, 34, 35, 36, 37,                              // octal flash/PSRAM upper lines (WROOM-2)
+    38, 48,                                          // onboard RGB LED (rev-dependent); 48 is also 1.8 V
+    47,                                              // 1.8 V I/O on WROOM-2 (VDD_SPI 1.8 V)
     43, 44,                                          // UART0 debug console
 };
 constexpr std::size_t kReservedCount = sizeof(kReserved) / sizeof(kReserved[0]);

@@ -144,7 +144,11 @@ void setup() {
   imuOk = imu.begin(apex::pins::IMU_SDA, apex::pins::IMU_SCL);
   // Future IMU logging plugs in here: imu.setSink(&someLogger) — see ImuSink in ImuCore.h.
 
-  Serial.printf("APEX_CHRONO,V1.5,BOOT,sd=%d,display=%d,imu=%d\n", sdOk, displayOk, imuOk);
+  // Memory as the running image sees it: proves the opi_opi board config
+  // (32 MB Octal flash, 16 MB Octal PSRAM) matches the module.
+  Serial.printf("APEX_CHRONO,V1.5,BOOT,chip=%s,flash=%lu,psram=%lu,sd=%d,display=%d,imu=%d\n", ESP.getChipModel(),
+                static_cast<unsigned long>(ESP.getFlashChipSize()), static_cast<unsigned long>(ESP.getPsramSize()),
+                sdOk, displayOk, imuOk);
   printImuBoot();
   Serial.println("APEX_CHRONO,V1.5,GNSS_READY,send track then END");
 }

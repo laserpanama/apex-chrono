@@ -2,7 +2,7 @@
 
 Target hardware for the first physical prototype:
 
-- **MCU**: ESP32-S3-DevKitC-1 **N32R16V** (32 MB QIO flash, 16 MB Octal PSRAM)
+- **MCU**: ESP32-S3-DevKitC-1 **N32R16V** — module ESP32-S3-WROOM-2-N32R16V: 32 MB **Octal** flash, 16 MB Octal PSRAM, VDD_SPI 1.8 V
 - **GNSS**: BN-880Q, 10 Hz, UART/NMEA
 - **Display**: ST7789 2" SPI TFT
 - **Storage**: microSD, SPI
@@ -32,20 +32,21 @@ Single source of truth: **`firmware/include/pins.h`**. Every driver takes its pi
 |                                                         | SCL               | 9                                           |
 |                                                         | INT1 (data-ready) | 21 — wired, **unused** in V1.5 (poll-based) |
 
-Spare / expansion, not wired by V1.5 firmware: **14, 15, 16, 39, 40, 41, 42, 47** — free for a start button, buzzer, a future GNSS PPS input, CAN, etc.
+Spare / expansion, not wired by V1.5 firmware: **14, 15, 16, 39, 40, 41, 42** — free for a start button, buzzer, a future GNSS PPS input, CAN, etc. (GPIO 47 was listed as spare in Task 3; on the WROOM-2 module it is 1.8 V I/O, so it is now reserved.)
 
 GNSS and storage/display are on **separate dedicated SPI buses** on purpose (storage is not SPI at all — it's a UART; display and storage each get their own hardware SPI peripheral, FSPI vs HSPI). For a first physical prototype this removes bus-sharing/CS-timing bugs as a bring-up variable; sharing one SPI bus between SD and the display is a safe later optimization once the board is proven.
 
 ### Reserved / do-not-use GPIOs on this exact module
 
-| Range        | Reason                                                                                                                                                   |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0, 3, 45, 46 | Strapping pins: BOOT mode / BOOT button (0), JTAG select (3), VDD_SPI voltage select (45), ROM log verbosity (46, input-only)                            |
-| 19, 20       | Native USB D-/D+, wired to the onboard "USB" connector                                                                                                   |
-| 26–32        | Quad SPI flash — reserved on **every** ESP32-S3 module with embedded flash, any size                                                                     |
-| 33–37        | Octal PSRAM — reserved **only because N32R16V uses Octal PSRAM** (16 MB is only available as Octal); not broken out to the header on this module variant |
-| 38, 48       | Onboard addressable RGB LED — board-revision dependent position (GPIO38 on DevKitC-1 v1.1, GPIO48 on v1.0); both reserved so the map is revision-proof   |
-| 43, 44       | UART0 TX/RX — the onboard USB-UART bridge, used as the debug/console `Serial` port                                                                       |
+| Range        | Reason                                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0, 3, 45, 46 | Strapping pins: BOOT mode / BOOT button (0), JTAG select (3), VDD_SPI voltage select (45), ROM log verbosity (46, input-only)                          |
+| 19, 20       | Native USB D-/D+, wired to the onboard "USB" connector                                                                                                 |
+| 26–32        | SPI flash/PSRAM bus — reserved on **every** ESP32-S3 module with embedded flash, any size                                                              |
+| 33–37        | Upper octal data lines + DQS — used by the WROOM-2's Octal flash and Octal PSRAM; not broken out on this module                                        |
+| 47           | 1.8 V I/O on WROOM-2 (VDD_SPI = 1.8 V also supplies GPIO47/48) — not usable as a 3.3 V spare                                                           |
+| 38, 48       | Onboard addressable RGB LED — board-revision dependent position (GPIO38 on DevKitC-1 v1.1, GPIO48 on v1.0); both reserved so the map is revision-proof |
+| 43, 44       | UART0 TX/RX — the onboard USB-UART bridge, used as the debug/console `Serial` port                                                                     |
 
 GPIO 22–25 do not exist on the ESP32-S3 chip at all (not a board limitation — they are simply absent from the pin numbering).
 
@@ -199,18 +200,20 @@ States: `not_found`, `wrong_chip`, `init_failed`, `comm_test_failed` (all at boo
 
 No sensor fusion, orientation, calibration, mounting-axis remap, g-force display or telemetry analysis. INT1 (GPIO 21) stays wired and unused; reading is polled.
 
-## 7. The N32R16V board configuration
+## 7. The N32R16V board configuration (corrected in Task 5)
 
-PlatformIO's `esp32-s3-devkitc-1` board definition is the plain **N8** variant (8 MB flash, no PSRAM) — there is no bundled N32R16V entry. Rather than hand-writing a new board JSON, `firmware/platformio.ini` overrides the two settings that matter:
+PlatformIO's `esp32-s3-devkitc-1` board definition is the plain **N8** variant (8 MB Quad flash, no PSRAM) — there is no bundled N32R16V entry, so `firmware/platformio.ini` overrides what differs:
 
 ```ini
-board_upload.flash_size = 32MB
+board_build.arduino.memory_type = opi_opi
+board_build.flash_mode = opi
 board_build.psram_type = opi
+board_upload.flash_size = 32MB
 ```
 
-The existing board's `flash_mode: qio` plus `psram_type: opi` makes the Arduino core derive `memory_type = qio_opi` (Quad-I/O flash + Octal-I/O PSRAM) — the correct mode for N32R16V, verified against `espressif32`'s own builder logic (`_get_board_memory_type()` in `~/.platformio/platforms/espressif32/builder/main.py`), not guessed.
+**Why `opi_opi`.** N32R16V is the ESP32-S3-**WROOM-2** module. Espressif's ESP32-S3-WROOM-2 datasheet lists `ESP32-S3-WROOM-2-N32R16V` as 32 MB **Octal SPI** flash + 16 MB Octal SPI PSRAM, with VDD_SPI fixed at 1.8 V by eFuse. Task 3 configured `qio` flash (deriving `qio_opi`), which matches no 32 MB ESP32-S3 module (the Quad-flash WROOM-1 family stops at 16 MB). A Quad-mode image on Octal flash is expected not to boot, so this was corrected before the first power-up; the configuration matches the community-verified one for the sibling N32R8V module. **Unverified until the board boots** — test procedure §3 checks it first, and the boot log must show the PSRAM size.
 
-The partition table is left at the board's default `default_8MB.csv`. This firmware's compiled app is ~420 KB (12.6% of the ~3.3 MB app partition it defines) — far short of needing the extra 24 MB this module actually has. A custom partition table sized for the full 32 MB is listed as an open item below, for whenever OTA or a much larger app needs it.
+The partition table is left at the board default (8 MB layout). The app is ~0.44 MB of a ~3.3 MB app partition; a 32 MB table is an open item for OTA.
 
 ## 8. Build, verification and results
 
