@@ -167,7 +167,7 @@ export class P2PRoom {
     return [...this.peers.values()].map((s) => ({ ...s.info }));
   }
 
-  // ── signaling loop ───────────────────────────────────────────────────────────
+  // ── signaling loop ─────────────────────────────────────────────────────────────
 
   private schedulePoll(delay: number): void {
     if (this.closed) return;
