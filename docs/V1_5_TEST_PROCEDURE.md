@@ -327,6 +327,8 @@ Build one table, one row per timed lap: device live time (`EVT,LAP` from the ser
 
 60 ms is the V1 simulation acceptance limit at 1.5 m position noise (`docs/V1_VALIDATION_REPORT.md`), which is the expected BN-880 class. The reference's own uncertainty counts against the device: transponder ≈ 1 ms, 120 fps video ≈ ±8 ms per crossing; 30 fps phone video (±33 ms) is too coarse.
 
+Drag mode (0-100, 60 ft, 1/4 mile) has its own steps D1–D5 in [DRAG_MODE.md](DRAG_MODE.md) §6. Run them after steps 1–10 pass, on a closed course or drag strip only.
+
 ## 16. Record sheet
 
 Copy this into the test log for each session.

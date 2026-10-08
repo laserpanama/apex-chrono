@@ -19,6 +19,13 @@
 //   162 2     BEST 1:22.901                   (best lap, extra)
 //   190 2     SD LOG 1234                     SD status
 //   214 2     IMU OK 100HZ                    (IMU status, extra)
+//
+// Drag view (no track loaded; docs/DRAG_MODE.md) replaces lines 1-5:
+//   26  2     DRAG READY - GO                 arm state
+//   52  5     0:05.4 / 87 KMH                 live run time, or live speed
+//   100 3     187 KMH / 60FT 2.31             live speed in a run, else last 60 ft
+//   130 3     0-100 5.43                      last run 0-100 km/h (X = invalid)
+//   162 2     #3 1/4 13.42 @171 KMH           last run 1/4 mile (or 1/8) + trap
 
 #include <cmath>
 #include <cstdint>
@@ -47,7 +54,18 @@ enum class ImuStatus : uint8_t {
   Failed,   // came up, then stopped answering during the session
 };
 
+enum class DisplayView : uint8_t { Lap, Drag };
+
+enum class DragUi : uint8_t {
+  NoFix,  // GNSS not locked: cannot arm
+  Stop,   // locked, waiting for a 1 s standstill
+  Ready,  // armed: launch starts the run
+  Run,    // run in progress
+};
+
 struct DisplayStatus {
+  DisplayView view = DisplayView::Lap;
+
   bool gnssLock = false;
   int sats = 0;
   double hdop = NAN;
@@ -70,6 +88,18 @@ struct DisplayStatus {
 
   ImuStatus imu = ImuStatus::Off;
   int imuHz = 0;
+
+  // Drag view (view == Drag). NAN = not reached / not available.
+  DragUi drag = DragUi::NoFix;
+  double speedKmh = NAN;      // live Doppler speed
+  double dragElapsedS = NAN;  // live, only while Run
+  bool haveDragRun = false;   // a completed run exists
+  int dragRun = 0;            // its number
+  bool dragValid = false;
+  double drag60ftS = NAN;
+  double drag0to100S = NAN;
+  double dragEighthS = NAN, dragEighthTrapKmh = NAN;
+  double dragQuarterS = NAN, dragQuarterTrapKmh = NAN;
 };
 
 enum class Tone : uint8_t { Normal, Good, Bad, Dim };
@@ -119,11 +149,92 @@ inline void formatLapTime(double s, int decimals, char* out, size_t n) {
   }
 }
 
+// Drag result seconds, "5.43"; "--" when not reached. Clamped to 999.99.
+inline void formatDragSeconds(double s, char* out, size_t n) {
+  if (!std::isfinite(s) || s < 0) {
+    std::snprintf(out, n, "--");
+    return;
+  }
+  const unsigned cs = clampU(std::llround(s * 100), 99999);
+  std::snprintf(out, n, "%u.%02u", cs / 100, cs % 100);
+}
+
 namespace detail {
 inline void setLine(DisplayLine& l, uint8_t size, uint16_t y, Tone tone) {
   l.size = size;
   l.y = y;
   l.tone = tone;
+}
+
+inline unsigned kmh(double v) { return std::isfinite(v) ? clampU(std::llround(v), 999) : 0u; }
+
+// Lines 1-5 of the drag view.
+inline void dragLines(const DisplayStatus& s, DisplayFrame& f) {
+  char a[8];  // formatDragSeconds: at most "999.99"
+  {
+    DisplayLine& l = f.line[1];
+    switch (s.drag) {
+      case DragUi::NoFix:
+        std::snprintf(l.text, sizeof l.text, "WAITING GNSS LOCK");
+        setLine(l, 2, 26, Tone::Bad);
+        break;
+      case DragUi::Stop:
+        std::snprintf(l.text, sizeof l.text, "DRAG - STOP TO ARM");
+        setLine(l, 2, 26, Tone::Normal);
+        break;
+      case DragUi::Ready:
+        std::snprintf(l.text, sizeof l.text, "DRAG READY - GO");
+        setLine(l, 2, 26, Tone::Good);
+        break;
+      case DragUi::Run:
+        std::snprintf(l.text, sizeof l.text, "DRAG RUN");
+        setLine(l, 2, 26, Tone::Good);
+        break;
+    }
+  }
+  const bool run = s.drag == DragUi::Run;
+  {
+    DisplayLine& l = f.line[2];
+    if (run) formatLapTime(s.dragElapsedS, 1, l.text, sizeof l.text);
+    else if (std::isfinite(s.speedKmh)) std::snprintf(l.text, sizeof l.text, "%u KMH", kmh(s.speedKmh));
+    else std::snprintf(l.text, sizeof l.text, "--- KMH");
+    setLine(l, 5, 52, run || s.drag != DragUi::NoFix ? Tone::Normal : Tone::Dim);
+  }
+  const Tone result = !s.haveDragRun ? Tone::Dim : (s.dragValid ? Tone::Normal : Tone::Bad);
+  {
+    DisplayLine& l = f.line[3];
+    if (run) {
+      std::snprintf(l.text, sizeof l.text, "%u KMH", kmh(s.speedKmh));
+      setLine(l, 3, 100, Tone::Normal);
+    } else {
+      formatDragSeconds(s.haveDragRun ? s.drag60ftS : NAN, a, sizeof a);
+      std::snprintf(l.text, sizeof l.text, "60FT %s", a);
+      setLine(l, 3, 100, result);
+    }
+  }
+  {
+    DisplayLine& l = f.line[4];
+    formatDragSeconds(s.haveDragRun ? s.drag0to100S : NAN, a, sizeof a);
+    std::snprintf(l.text, sizeof l.text, "0-100 %s%s", a, s.haveDragRun && !s.dragValid ? " X" : "");
+    setLine(l, 3, 130, result);
+  }
+  {
+    DisplayLine& l = f.line[5];
+    const bool q = s.haveDragRun && std::isfinite(s.dragQuarterS);
+    const bool e = s.haveDragRun && !q && std::isfinite(s.dragEighthS);
+    if (q || e) {
+      formatDragSeconds(q ? s.dragQuarterS : s.dragEighthS, a, sizeof a);
+      std::snprintf(l.text, sizeof l.text, "#%u %s %s @%u KMH", clampU(s.dragRun, 999), q ? "1/4" : "1/8", a,
+                    kmh(q ? s.dragQuarterTrapKmh : s.dragEighthTrapKmh));
+      setLine(l, 2, 162, s.dragValid ? Tone::Good : Tone::Bad);
+    } else if (s.haveDragRun) {
+      std::snprintf(l.text, sizeof l.text, "#%u 1/4 --", clampU(s.dragRun, 999));
+      setLine(l, 2, 162, Tone::Dim);
+    } else {
+      std::snprintf(l.text, sizeof l.text, "1/4 --");
+      setLine(l, 2, 162, Tone::Dim);
+    }
+  }
 }
 }  // namespace detail
 
@@ -141,78 +252,82 @@ inline void buildFrame(const DisplayStatus& s, DisplayFrame& f) {
     setLine(l, 2, 4, s.gnssLock ? Tone::Good : Tone::Bad);
   }
 
-  // 1 — timing status
-  {
-    DisplayLine& l = f.line[1];
-    switch (s.timing) {
-      case TimingStatus::NoTrack:
-        std::snprintf(l.text, sizeof l.text, "NO TRACK LOADED");
-        setLine(l, 2, 26, Tone::Bad);
-        break;
-      case TimingStatus::NoFix:
-        std::snprintf(l.text, sizeof l.text, "WAITING GNSS LOCK");
-        setLine(l, 2, 26, Tone::Bad);
-        break;
-      case TimingStatus::WaitStart:
-        std::snprintf(l.text, sizeof l.text, "READY - CROSS START");
-        setLine(l, 2, 26, Tone::Normal);
-        break;
-      case TimingStatus::InLap:
-        std::snprintf(l.text, sizeof l.text, "TIMING");
-        setLine(l, 2, 26, Tone::Good);
-        break;
+  if (s.view == DisplayView::Drag) {
+    detail::dragLines(s, f);
+  } else {
+    // 1 — timing status
+    {
+      DisplayLine& l = f.line[1];
+      switch (s.timing) {
+        case TimingStatus::NoTrack:
+          std::snprintf(l.text, sizeof l.text, "NO TRACK LOADED");
+          setLine(l, 2, 26, Tone::Bad);
+          break;
+        case TimingStatus::NoFix:
+          std::snprintf(l.text, sizeof l.text, "WAITING GNSS LOCK");
+          setLine(l, 2, 26, Tone::Bad);
+          break;
+        case TimingStatus::WaitStart:
+          std::snprintf(l.text, sizeof l.text, "READY - CROSS START");
+          setLine(l, 2, 26, Tone::Normal);
+          break;
+        case TimingStatus::InLap:
+          std::snprintf(l.text, sizeof l.text, "TIMING");
+          setLine(l, 2, 26, Tone::Good);
+          break;
+      }
     }
-  }
 
-  // 2 — live lap time (big)
-  {
-    DisplayLine& l = f.line[2];
-    const bool live = s.timing == TimingStatus::InLap;
-    formatLapTime(live ? s.lapElapsedS : NAN, 1, l.text, sizeof l.text);
-    setLine(l, 5, 52, live ? Tone::Normal : Tone::Dim);
-  }
-
-  // 3 — current lap + sector
-  {
-    DisplayLine& l = f.line[3];
-    if (s.lapNumber > 0) std::snprintf(a, sizeof a, "LAP %u", clampU(s.lapNumber, 999));
-    else std::snprintf(a, sizeof a, "LAP -");
-    if (s.sectorCount > 1 && s.timing == TimingStatus::InLap && s.sector > 0) {
-      char sec[12];
-      std::snprintf(sec, sizeof sec, "S%u/%u", clampU(s.sector, 99), clampU(s.sectorCount, 99));
-      // right-align the sector inside the 17-column size-3 line
-      const int cols = displayColumns(3);
-      const int pad = cols - static_cast<int>(std::strlen(a)) - static_cast<int>(std::strlen(sec));
-      std::snprintf(l.text, sizeof l.text, "%s%*s%s", a, pad > 1 ? pad : 1, "", sec);
-    } else {
-      std::snprintf(l.text, sizeof l.text, "%s", a);
+    // 2 — live lap time (big)
+    {
+      DisplayLine& l = f.line[2];
+      const bool live = s.timing == TimingStatus::InLap;
+      formatLapTime(live ? s.lapElapsedS : NAN, 1, l.text, sizeof l.text);
+      setLine(l, 5, 52, live ? Tone::Normal : Tone::Dim);
     }
-    setLine(l, 3, 100, Tone::Normal);
-  }
 
-  // 4 — last lap (invalid laps flagged, still shown)
-  {
-    DisplayLine& l = f.line[4];
-    if (s.haveLastLap) {
-      formatLapTime(s.lastLapS, 3, a, sizeof a);
-      std::snprintf(l.text, sizeof l.text, "LAST %s%s", a, s.lastLapValid ? "" : " X");
-      setLine(l, 3, 130, s.lastLapValid ? Tone::Normal : Tone::Bad);
-    } else {
-      std::snprintf(l.text, sizeof l.text, "LAST --");
-      setLine(l, 3, 130, Tone::Dim);
+    // 3 — current lap + sector
+    {
+      DisplayLine& l = f.line[3];
+      if (s.lapNumber > 0) std::snprintf(a, sizeof a, "LAP %u", clampU(s.lapNumber, 999));
+      else std::snprintf(a, sizeof a, "LAP -");
+      if (s.sectorCount > 1 && s.timing == TimingStatus::InLap && s.sector > 0) {
+        char sec[12];
+        std::snprintf(sec, sizeof sec, "S%u/%u", clampU(s.sector, 99), clampU(s.sectorCount, 99));
+        // right-align the sector inside the 17-column size-3 line
+        const int cols = displayColumns(3);
+        const int pad = cols - static_cast<int>(std::strlen(a)) - static_cast<int>(std::strlen(sec));
+        std::snprintf(l.text, sizeof l.text, "%s%*s%s", a, pad > 1 ? pad : 1, "", sec);
+      } else {
+        std::snprintf(l.text, sizeof l.text, "%s", a);
+      }
+      setLine(l, 3, 100, Tone::Normal);
     }
-  }
 
-  // 5 — best lap
-  {
-    DisplayLine& l = f.line[5];
-    if (s.haveBestLap) {
-      formatLapTime(s.bestLapS, 3, a, sizeof a);
-      std::snprintf(l.text, sizeof l.text, "BEST %s", a);
-      setLine(l, 2, 162, Tone::Good);
-    } else {
-      std::snprintf(l.text, sizeof l.text, "BEST --");
-      setLine(l, 2, 162, Tone::Dim);
+    // 4 — last lap (invalid laps flagged, still shown)
+    {
+      DisplayLine& l = f.line[4];
+      if (s.haveLastLap) {
+        formatLapTime(s.lastLapS, 3, a, sizeof a);
+        std::snprintf(l.text, sizeof l.text, "LAST %s%s", a, s.lastLapValid ? "" : " X");
+        setLine(l, 3, 130, s.lastLapValid ? Tone::Normal : Tone::Bad);
+      } else {
+        std::snprintf(l.text, sizeof l.text, "LAST --");
+        setLine(l, 3, 130, Tone::Dim);
+      }
+    }
+
+    // 5 — best lap
+    {
+      DisplayLine& l = f.line[5];
+      if (s.haveBestLap) {
+        formatLapTime(s.bestLapS, 3, a, sizeof a);
+        std::snprintf(l.text, sizeof l.text, "BEST %s", a);
+        setLine(l, 2, 162, Tone::Good);
+      } else {
+        std::snprintf(l.text, sizeof l.text, "BEST --");
+        setLine(l, 2, 162, Tone::Dim);
+      }
     }
   }
 

@@ -7,6 +7,11 @@
 //   Display       firmware/lib/apex_display  ST7789 320x240 status panel (observer)
 //   Imu           firmware/lib/apex_imu      BMI270 via Bosch Sensor API (observer, not used for timing)
 //   TimerService  firmware/lib/apex_timer    Track + apex::LapEngine (apex_timing.h UNCHANGED/frozen)
+//   DragEngine    firmware/lib/apex_drag     0-100 / 60 ft / 1/8 / 1/4 mile runs (docs/DRAG_MODE.md)
+//
+// Lap timing and drag timing run side by side on every fix: drag needs no
+// track. The display shows the drag view until a track is loaded, then the
+// lap view. Neither engine can affect the other (separate state, same fix).
 //
 // GNSS -> Timer is the only critical path. Storage, IMU and Display run
 // strictly after the fixes available this iteration have been timed, and no
@@ -17,6 +22,7 @@
 //   APEX_CHRONO,V1.5,BOOT,...     once, peripheral bring-up result
 //   IMU,...                       once, BMI270 init + communication test detail
 //   EVT,...                       timing events (unchanged from V1)
+//   EVT,DRAG_*,...                drag events; EVT,DRAG_RUN,... = one-line result
 //   STAT,...                      once per second, health snapshot:
 //                                 nmea_* = raw UART health (works before a lock),
 //                                 gnss_hz = fixes/s, sd/imu/display state, IMU sample
@@ -24,8 +30,13 @@
 #include <Arduino.h>
 #include <SPI.h>
 
+#include <cmath>
+#include <cstdio>
+
 #include "Display.h"
 #include "DisplayModel.h"
+#include "DragEngine.h"
+#include "DragView.h"
 #include "GnssContractRow.h"
 #include "GnssDriver.h"
 #include "Imu.h"
@@ -40,10 +51,12 @@ static apex::SdLogger sd;
 static apex::Display display;
 static apex::Imu imu;
 static apex::TimerService timer;
+static apex::DragEngine drag;
 
 static SPIClass sdSpi(FSPI);   // dedicated bus for microSD
 static SPIClass tftSpi(HSPI);  // dedicated bus for the ST7789 — never shared with SD
 
+static double lastSpeedKmh = NAN;  // newest Doppler speed, for the drag view
 static bool sdOk = false, displayOk = false, imuOk = false;
 
 // GNSS state kept across loop() iterations (poll() locals only see this call's bytes).
@@ -86,6 +99,57 @@ static void logEvent(const apex::Event& e) {
     case apex::EventType::IgnoredBeforeStart:
       Serial.printf("EVT,IGNORED,%.3f,gate=%d\n", e.t, e.index);
       break;
+  }
+}
+
+static void printDragTime(const char* label, double s) {
+  if (std::isfinite(s)) Serial.printf(",%s=%.3f", label, s);
+  else Serial.printf(",%s=", label);
+}
+
+static void logDragEvent(const apex::DragEvent& e) {
+  const apex::DragConfig& c = drag.config();
+  switch (e.type) {
+    case apex::DragEventType::Armed:
+      Serial.printf("EVT,DRAG_ARMED,%.3f\n", e.t);
+      break;
+    case apex::DragEventType::Launch:
+      Serial.printf("EVT,DRAG_LAUNCH,%.3f,t0=%.3f\n", e.t, e.timeS);
+      break;
+    case apex::DragEventType::Speed:
+      Serial.printf("EVT,DRAG_SPEED,%.3f,kmh=%.2f,%.3f\n", e.t, c.speedKmh[e.index], e.timeS);
+      break;
+    case apex::DragEventType::Distance:
+      Serial.printf("EVT,DRAG_DIST,%.3f,m=%.3f,%.3f,trap_kmh=%.1f\n", e.t, c.distM[e.index], e.timeS, e.trapKmh);
+      break;
+    case apex::DragEventType::End: {
+      const apex::DragRun& r = drag.lastRun();
+      const apex::DragTargetIndex x = apex::dragTargetIndex(c);
+      Serial.printf("EVT,DRAG_RUN,%.3f,%d,%s,flags=%u,end=%s", e.t, r.number, r.valid ? "valid" : "invalid",
+                    static_cast<unsigned>(r.flags), apex::dragEndName(r.endReason));
+      for (int i = 0; i < c.nSpeed; i++) {
+        char label[16];
+        if (std::fabs(c.speedKmh[i] - 60 * apex::kMph) < 1e-6) std::snprintf(label, sizeof label, "0-60mph");
+        else std::snprintf(label, sizeof label, "0-%.0f", c.speedKmh[i]);
+        printDragTime(label, r.speedTimeS[i]);
+      }
+      if (x.d60ft >= 0) printDragTime("60ft", r.distTimeS[x.d60ft]);
+      if (x.dEighth >= 0) printDragTime("1/8", r.distTimeS[x.dEighth]);
+      if (x.dQuarter >= 0) {
+        printDragTime("1/4", r.distTimeS[x.dQuarter]);
+        if (std::isfinite(r.trapKmh[x.dQuarter])) Serial.printf(",trap_kmh=%.1f", r.trapKmh[x.dQuarter]);
+        else Serial.printf(",trap_kmh=");
+      }
+      for (int i = 0; i < c.nRanges; i++) {
+        char label[16];
+        std::snprintf(label, sizeof label, "%.0f-%.0f", c.rangeKmh[i][0], c.rangeKmh[i][1]);
+        printDragTime(label, r.rangeTimeS[i]);
+      }
+      Serial.printf(",peak_kmh=%.1f,dist_m=%.1f", r.peakKmh, r.distanceM);
+      if (std::isfinite(r.slopePct)) Serial.printf(",slope_pct=%.2f\n", r.slopePct);
+      else Serial.printf(",slope_pct=\n");
+      break;
+    }
   }
 }
 
@@ -154,6 +218,7 @@ void setup() {
                 sdOk, displayOk, imuOk);
   printImuBoot();
   Serial.println("APEX_CHRONO,V1.5,GNSS_READY,send track then END");
+  Serial.println("APEX_CHRONO,V1.5,DRAG_READY,stop 1 s to arm (drag view until a track is loaded)");
 }
 
 void loop() {
@@ -187,6 +252,17 @@ void loop() {
         logEvent(ev[i]);
       }
     }
+
+    // Drag timing: independent engine, same fix (contract row, which also
+    // carries altitude for the slope). Runs with or without a track.
+    {
+      apex::DragEvent dev[apex::kDragMaxEvents];
+      const int n = drag.push(apex::dragSampleFromRow(row.timestampMs, row.speedKmh, row.satellites, row.hdop,
+                                                      row.fixQuality, row.altitudeM),
+                              dev);
+      for (int i = 0; i < n; i++) logDragEvent(dev[i]);
+      lastSpeedKmh = row.speedKmh;
+    }
   }
 
   const uint32_t now = millis();
@@ -201,6 +277,7 @@ void loop() {
     lastDisplayMs = now;
     apex::DisplayStatus st;
     apex::fillTiming(timer.engine(), sectors, timer.trackReady(), gnssView, st);
+    if (!timer.trackReady()) apex::fillDrag(drag, st.gnssLock, gnssView.stale ? NAN : lastSpeedKmh, st);
     st.sd = sdStatus();
     st.sdRows = sd.rowsLogged();
     st.sdFailures = sd.failures();
@@ -227,13 +304,14 @@ void loop() {
     const apex::ImuSample& s = imu.core().latest();
     Serial.printf(
         "STAT,ms=%lu,nmea_chars=%lu,nmea_ok=%lu,nmea_bad=%lu,nmea_hz=%d,fixes=%lu,gnss_hz=%d,lock=%d,sats=%d,hdop=%.2f,"
-        "timing=%s,lap=%d,sector=%d/%d,"
+        "timing=%s,lap=%d,sector=%d/%d,drag=%s,drag_runs=%d,"
         "sd=%s,rows=%lu,sd_fail=%lu,imu=%s,imu_hz=%d,imu_fail=%lu,ax=%.2f,ay=%.2f,az=%.2f,gx=%.2f,gy=%.2f,gz=%.2f,"
         "disp_us=%lu,disp_max_us=%lu\n",
         static_cast<unsigned long>(now), static_cast<unsigned long>(gnss.nmeaChars()),
         static_cast<unsigned long>(nmeaOk), static_cast<unsigned long>(gnss.nmeaChecksumErrors()), nmeaHz,
         static_cast<unsigned long>(fixes), gnssHz, st.gnssLock, st.sats,
         std::isfinite(st.hdop) ? st.hdop : 99.9, timingName(st.timing), st.lapNumber, st.sector, st.sectorCount,
+        apex::dragStateName(drag.state()), drag.runs(),
         sdName(sdStatus()), static_cast<unsigned long>(sd.rowsLogged()), static_cast<unsigned long>(sd.failures()),
         apex::imuStateName(imu.state()), imuHz, static_cast<unsigned long>(imu.core().readFailures()), s.ax, s.ay,
         s.az, s.gx, s.gy, s.gz, static_cast<unsigned long>(display.lastRenderUs()),

@@ -14,6 +14,10 @@
  * A real circuit is given with `--track-file <file.track>` — the same `.track`
  * text the device loads over serial (see track-file.ts).
  *
+ * Drag runs (0-100, 60 ft, 1/8, 1/4 mile — drag.ts) are always listed too:
+ * they need no track. `--rollout` times them from 1 ft of movement
+ * (drag-strip convention) instead of the standing start.
+ *
  * Determinism: the same file always yields the same laps — this is the tool
  * you use to prove a live session reproduced bit-for-bit on the desktop.
  */
@@ -26,6 +30,7 @@ import { parseTrackFile } from "./track-file.ts";
 import { parseRecording, replayRecording, type ReplayWarning } from "./recording.ts";
 import { recordingStats } from "./recording-stats.ts";
 import { formatLap } from "../timer/engine.ts";
+import { DragEngine, FT, distanceLabel, flagNames, rowToDragSample, speedLabel } from "./drag.ts";
 
 const fmtT = (t: number) => t.toFixed(3);
 const SPEED0 = "──.--";
@@ -54,7 +59,7 @@ function main() {
   const file = argv[0];
   if (!file) {
     console.error(
-      "usage: npm run replay:gps -- <file.csv> [--track club|street|fast | --track-file <file.track>]",
+      "usage: npm run replay:gps -- <file.csv> [--track club|street|fast | --track-file <file.track>] [--rollout]",
     );
     process.exit(2);
   }
@@ -139,6 +144,31 @@ function main() {
     );
   } else {
     console.log("\nbest lap: —");
+  }
+
+  // Drag runs (independent of the track)
+  const rollout = argv.includes("--rollout");
+  const drag = new DragEngine({ rolloutM: rollout ? FT : 0 });
+  for (const row of r.rows) drag.push(rowToDragSample(row));
+  drag.flush();
+  const s2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "—");
+  console.log(
+    `\ndrag runs (${rollout ? "1 ft rollout" : "standing start, no rollout"}): ${drag.runs.length}`,
+  );
+  for (const d of drag.runs) {
+    const c = drag.cfg;
+    const parts = [
+      ...c.speedTargetsKmh.map((k, i) => `${speedLabel(k)} ${s2(d.speedTimesS[i])}`),
+      ...c.distanceTargetsM.map(
+        (m, i) =>
+          `${distanceLabel(m)} ${s2(d.distanceTimesS[i])}${Number.isFinite(d.trapKmh[i]) ? ` @${d.trapKmh[i].toFixed(1)}` : ""}`,
+      ),
+      ...c.rangesKmh.map(([lo, hi], i) => `${lo}-${hi} km/h ${s2(d.rangeTimesS[i])}`),
+    ];
+    console.log(
+      `  #${d.number} ${d.valid ? "valid" : `INVALID (${flagNames(d.flags).join(", ")})`}  end=${d.endReason}  peak ${d.peakKmh.toFixed(1)} km/h  ${d.distanceM.toFixed(0)} m${Number.isFinite(d.slopePct) ? `  slope ${d.slopePct.toFixed(2)} %` : ""}`,
+    );
+    console.log(`     ${parts.join("  ")}`);
   }
 }
 

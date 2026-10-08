@@ -4,6 +4,7 @@
 // Covers what can be wrong without a chip or panel in front of you:
 //   display  — text/layout of every status field, line widths and overlap
 //   timing   — TimingView over the real LapEngine, replaying parity fixtures
+//   drag     — drag view text/layout, DragView over the real DragEngine
 //   imu      — init states, communication test, conversion, timestamps,
 //              sensor-time wrap, failure give-up, ImuRing logging sink
 
@@ -11,11 +12,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "DisplayModel.h"
+#include "DragEngine.h"
+#include "DragView.h"
 #include "ImuCore.h"
 #include "TimingView.h"
 #include "apex_timing.h"
@@ -515,6 +519,154 @@ static void testImuRingOverflow() {
   CHECK(!r.pop(s));
 }
 
+// ───────────────────────────── drag view ─────────────────────────────
+
+static void testDragFrame() {
+  std::printf("display: drag view frames\n");
+  apex::DisplayStatus s;
+  s.view = apex::DisplayView::Drag;
+  apex::DisplayFrame f;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[1].text, "WAITING GNSS LOCK");
+  CHECK_STR(f.line[2].text, "--- KMH");
+  CHECK_STR(f.line[3].text, "60FT --");
+  CHECK_STR(f.line[4].text, "0-100 --");
+  CHECK_STR(f.line[5].text, "1/4 --");
+  CHECK_STR(f.line[6].text, "SD NO CARD");  // shared lines unchanged
+
+  s.gnssLock = true;
+  s.drag = apex::DragUi::Stop;
+  s.speedKmh = 0.4;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[1].text, "DRAG - STOP TO ARM");
+  CHECK_STR(f.line[2].text, "0 KMH");
+  s.drag = apex::DragUi::Ready;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[1].text, "DRAG READY - GO");
+  CHECK(f.line[1].tone == apex::Tone::Good);
+
+  s.drag = apex::DragUi::Run;
+  s.speedKmh = 187.4;
+  s.dragElapsedS = 5.44;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[1].text, "DRAG RUN");
+  CHECK_STR(f.line[2].text, "0:05.4");
+  CHECK_STR(f.line[3].text, "187 KMH");
+
+  s.drag = apex::DragUi::Stop;
+  s.speedKmh = 0;
+  s.haveDragRun = true;
+  s.dragRun = 3;
+  s.dragValid = true;
+  s.drag60ftS = 2.314;
+  s.drag0to100S = 5.4349;
+  s.dragEighthS = 8.51;
+  s.dragEighthTrapKmh = 140.2;
+  s.dragQuarterS = 13.4249;
+  s.dragQuarterTrapKmh = 171.4;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[3].text, "60FT 2.31");
+  CHECK_STR(f.line[4].text, "0-100 5.43");
+  CHECK_STR(f.line[5].text, "#3 1/4 13.42 @171 KMH");
+  CHECK(f.line[5].tone == apex::Tone::Good);
+
+  s.dragQuarterS = NAN;  // lifted before 1/4 mile: show 1/8
+  s.dragValid = false;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[4].text, "0-100 5.43 X");
+  CHECK(f.line[4].tone == apex::Tone::Bad);
+  CHECK_STR(f.line[5].text, "#3 1/8 8.51 @140 KMH");
+  s.dragEighthS = NAN;
+  apex::buildFrame(s, f);
+  CHECK_STR(f.line[5].text, "#3 1/4 --");
+
+  // worst case widths / geometry
+  s.drag = apex::DragUi::Run;
+  s.dragElapsedS = 1e6;
+  s.speedKmh = 1e6;
+  s.dragRun = 100000;
+  s.drag60ftS = s.drag0to100S = s.dragQuarterS = 1e9;
+  s.dragQuarterTrapKmh = 1e9;
+  s.sats = 99;
+  s.hdop = 12.3;
+  apex::buildFrame(s, f);
+  for (int pass = 0; pass < 2; pass++) {
+    int prevBottom = 0;
+    for (int i = 0; i < apex::kDisplayLineCount; i++) {
+      const apex::DisplayLine& l = f.line[i];
+      const int len = static_cast<int>(std::strlen(l.text));
+      if (len > apex::displayColumns(l.size)) std::printf("  drag line %d too wide: \"%s\"\n", i, l.text);
+      CHECK(len <= apex::displayColumns(l.size));
+      CHECK(l.y >= prevBottom);
+      CHECK(l.y + 8 * l.size <= apex::kDisplayHeightPx);
+      prevBottom = l.y + 8 * l.size;
+    }
+    s.drag = apex::DragUi::Stop;
+    apex::buildFrame(s, f);
+  }
+  char b[12];
+  apex::formatDragSeconds(5.435, b, sizeof b);
+  CHECK_STR(b, "5.44");  // rounds half away (llround), never truncates
+  apex::formatDragSeconds(-1, b, sizeof b);
+  CHECK_STR(b, "--");
+}
+
+static apex::DragEngine g_drag;
+
+static void testDragView(const std::string& dir) {
+  std::printf("drag: DragView over the real DragEngine (fixture drag_10hz_three_cars)\n");
+  std::ifstream in(dir + "/drag_10hz_three_cars.csv");
+  CHECK(in.good());
+  std::string line;
+  std::getline(in, line);  // header
+  g_drag.reset();
+  bool sawStop = false, sawReady = false, sawRun = false, elapsedOk = true, resultsOk = true;
+  double prevElapsed = -1;
+  int runsSeen = 0;
+  apex::DragEvent ev[apex::kDragMaxEvents];
+  while (std::getline(in, line)) {
+    const auto c = splitCsv(line);
+    const double kmh = c[3].empty() ? NAN : std::strtod(c[3].c_str(), nullptr);
+    const apex::DragSample smp = apex::dragSampleFromRow(std::strtoll(c[0].c_str(), nullptr, 10), kmh,
+                                                         std::atoi(c[5].c_str()), std::strtod(c[6].c_str(), nullptr),
+                                                         c[7].empty() ? -1 : std::atoi(c[7].c_str()), NAN);
+    g_drag.push(smp, ev);
+    apex::DisplayStatus st;
+    apex::fillDrag(g_drag, true, kmh, st);
+    CHECK(st.view == apex::DisplayView::Drag);
+    if (st.drag == apex::DragUi::Stop) sawStop = true;
+    if (st.drag == apex::DragUi::Ready) sawReady = true;
+    if (st.drag == apex::DragUi::Run) {
+      sawRun = true;
+      if (std::isfinite(st.dragElapsedS)) {
+        if (st.dragElapsedS <= prevElapsed && prevElapsed >= 0 && st.dragElapsedS > 0.5) elapsedOk = false;
+        prevElapsed = st.dragElapsedS;
+      }
+    } else {
+      prevElapsed = -1;
+    }
+    if (g_drag.runs() != runsSeen) {
+      runsSeen = g_drag.runs();
+      const apex::DragRun& r = g_drag.lastRun();
+      if (!(st.haveDragRun && st.dragRun == r.number && st.drag0to100S == r.speedTimeS[2] &&
+            st.dragQuarterS == r.distTimeS[2] && st.drag60ftS == r.distTimeS[0] && st.dragValid))
+        resultsOk = false;
+      // plausibility of the simulated cars (exact values are covered by drag_parity)
+      if (!(r.speedTimeS[2] > 2.5 && r.speedTimeS[2] < 15)) resultsOk = false;
+    }
+  }
+  CHECK(sawStop);
+  CHECK(sawReady);
+  CHECK(sawRun);
+  CHECK(elapsedOk);
+  CHECK(resultsOk);
+  CHECK(runsSeen == 3);
+  apex::DisplayStatus st;
+  apex::fillDrag(g_drag, false, NAN, st);
+  CHECK(st.drag == apex::DragUi::NoFix);
+  CHECK(st.haveDragRun);  // last results stay on screen without lock
+}
+
 int main(int argc, char** argv) {
   const std::string dir = argc > 1 ? argv[1] : "firmware/test_host/fixtures";
   testLapTimeFormat();
@@ -522,6 +674,8 @@ int main(int argc, char** argv) {
   testFrameRacing();
   testFrameGeometry();
   testTimingView(dir);
+  testDragFrame();
+  testDragView(dir);
   testImuInitStates();
   testImuSamples();
   testImuSensorTimeWrap();

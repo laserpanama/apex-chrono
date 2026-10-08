@@ -2,7 +2,7 @@
 
 [![firmware](https://github.com/laserpanama/apex-chrono/actions/workflows/firmware.yml/badge.svg?branch=v1.5-hardware-readiness)](https://github.com/laserpanama/apex-chrono/actions/workflows/firmware.yml)
 
-GNSS lap timer: ESP32-S3 firmware plus a browser cockpit. The cockpit runs on a simulated 10 Hz GNSS fix and shows the same screens the hardware is meant to show, so the timing chain can be checked before any parts are on the car.
+GNSS lap timer and drag meter: ESP32-S3 firmware plus a browser cockpit. The cockpit runs on a simulated 10 Hz GNSS fix and shows the same screens the hardware is meant to show, so the timing chain can be checked before any parts are on the car.
 
 **Status (V1.5):** software ready for physical validation. The firmware compiles and passes its host tests. **It has not been run on real hardware yet.** The procedure for doing that is [docs/V1_5_TEST_PROCEDURE.md](docs/V1_5_TEST_PROCEDURE.md).
 
@@ -121,6 +121,7 @@ Target: ESP32-S3-DevKitC-1 **N32R16V** (WROOM-2, Octal flash and PSRAM), BN-880Q
 | Storage | `firmware/lib/apex_storage` | Raw GNSS CSV on microSD ([contract](docs/GNSS_DATA_CONTRACT.md))                      |
 | Display | `firmware/lib/apex_display` | GNSS lock, sats, HDOP, timing status, lap time, lap, sector, last/best, SD, IMU       |
 | IMU     | `firmware/lib/apex_imu`     | BMI270 via Bosch Sensor API, accel/gyro samples with timestamps (not used for timing) |
+| Drag    | `firmware/lib/apex_drag`    | 0-100, 60 ft, 1/8 and 1/4 mile, 100-200 km/h from Doppler speed (parity-tested vs TS) |
 
 Timing never depends on the SD card, display or IMU. If any of them fails, that feature goes off and timing keeps running.
 
@@ -130,11 +131,13 @@ Build and flash from `firmware/`, using the DevKitC **UART** port:
 pio run -t upload && pio device monitor -b 115200 -f time -f log2file
 ```
 
-After each boot, paste the circuit's `.track` file into the monitor. The device answers `TRACK,OK`. The SD card records every fix. Replay a session on the desktop with the same track file:
+Without a track the display shows the **drag view**: stop for 1 s, launch, and it times 0-100, 60 ft, 1/8 and 1/4 mile ([docs/DRAG_MODE.md](docs/DRAG_MODE.md)). For laps, paste the circuit's `.track` file into the monitor after each boot. The device answers `TRACK,OK`. The SD card records every fix. Replay a session on the desktop with the same track file:
 
 ```bash
 npm run replay:gps -- APEX_YYYYMMDD_HHMM.CSV --track-file my-circuit.track
 ```
+
+The replay also lists every drag run in the file (`--rollout` for drag-strip 1 ft rollout).
 
 CI compiles the firmware with PlatformIO on every push that touches `firmware/` and runs the host tests ([workflow](.github/workflows/firmware.yml)).
 
@@ -145,5 +148,6 @@ CI compiles the firmware with PlatformIO on every push that touches `firmware/` 
 | [docs/V1_5_HARDWARE.md](docs/V1_5_HARDWARE.md)             | Firmware architecture, display/IMU, board config, build results, open items       |
 | [docs/V1_5_ARCHITECTURE.md](docs/V1_5_ARCHITECTURE.md)     | V1.5 pipeline audit and blockers                                                  |
 | [docs/GNSS_DATA_CONTRACT.md](docs/GNSS_DATA_CONTRACT.md)   | Fix/row format shared by firmware, SD and replay                                  |
+| [docs/DRAG_MODE.md](docs/DRAG_MODE.md)                     | Drag/acceleration timing: method, simulated accuracy, validation steps D1–D5      |
 
 Not yet tested on hardware. Known gaps: tracks are loaded over serial only, the IMU is not logged to SD, the IMU axes are not mapped to the car, and the display timing is unmeasured. The full list is in `docs/V1_5_HARDWARE.md` §9.
