@@ -104,6 +104,10 @@ npm run track:check -- <file.track>   # validate a real-circuit track file
 
 Stack: Vite, TanStack Start, React 19, Tailwind 4. Timer state lives in `src/lib/timer` (Zustand store, lap engine, track geometry). The screens are in `src/components/timer/AppShell.tsx`.
 
+## Phone mode
+
+`/phone` (the **Phone** button in the cockpit) runs the same drag and lap engines on the phone's own GPS and motion sensors. Open the published site on the phone, tap Start, allow location. The phone's real fix rate (often ~1 Hz in a browser) is measured and shown, low-rate drag launches are flagged invalid, and the CSV it exports replays on the desktop with `replay:gps`. Details: [docs/PHONE_MODE.md](docs/PHONE_MODE.md).
+
 ## GPS timing (V1)
 
 Laps and sectors in the preview come from the same GNSS pipeline the hardware runs: noisy 10 Hz fixes → map matching onto the centerline → geographic gates → lap state machine, all timed from GNSS timestamps. The code is in `src/lib/gnss`, the C++ port for the ESP32-S3 is in `firmware/`. Open the app with `?timing=synthetic` for the old distance-based laps when working on UI only.

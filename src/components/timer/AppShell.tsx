@@ -10,8 +10,10 @@ import {
   RotateCcw,
   Satellite,
   ScrollText,
+  Smartphone,
   Timer,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { TRACKS } from "@/lib/timer/tracks";
 import { startLoop, useSession, type Screen } from "@/lib/timer/store";
 import { formatDelta, formatLap, formatSpeed } from "@/lib/timer/engine";
@@ -39,7 +41,13 @@ export function AppShell() {
 
   const delta = s.deltaS;
   const deltaTone =
-    delta == null ? "text-muted" : delta < -0.02 ? "text-signal" : delta > 0.02 ? "text-delta" : "text-fg";
+    delta == null
+      ? "text-muted"
+      : delta < -0.02
+        ? "text-signal"
+        : delta > 0.02
+          ? "text-delta"
+          : "text-fg";
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-3 pb-24 pt-3 sm:px-5 sm:pb-6 sm:pt-5">
@@ -53,7 +61,11 @@ export function AppShell() {
         <div className="text-right">
           <p className="num text-sm text-fg">
             {now
-              ? now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+              ? now.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })
               : "--:--:--"}
           </p>
           <p className="label text-[11px] text-muted">{s.track.place}</p>
@@ -92,6 +104,12 @@ export function AppShell() {
             ))}
           </select>
         </label>
+        <Link
+          to="/phone"
+          className="bezel label inline-flex min-h-11 items-center gap-2 rounded-md px-3 text-sm text-fg"
+        >
+          <Smartphone size={16} className="text-amber" /> Phone
+        </Link>
         <div className="ml-auto flex gap-2">
           <button
             type="button"
@@ -160,7 +178,9 @@ function Dash({ deltaTone }: { deltaTone: string }) {
           </p>
           <StatusPills />
         </div>
-        <p className={`num mt-2 text-6xl leading-none text-fg sm:text-8xl ${s.flash === "LAP" ? "text-amber" : ""}`}>
+        <p
+          className={`num mt-2 text-6xl leading-none text-fg sm:text-8xl ${s.flash === "LAP" ? "text-amber" : ""}`}
+        >
           {s.armed ? formatLap(s.lapElapsed) : formatLap(null)}
         </p>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -169,7 +189,9 @@ function Dash({ deltaTone }: { deltaTone: string }) {
           <Stat k="Last" v={formatLap(s.lastS)} />
         </div>
         {s.flash && (
-          <p className="label pointer-events-none absolute top-4 right-4 text-2xl text-amber">{s.flash}</p>
+          <p className="label pointer-events-none absolute top-4 right-4 text-2xl text-amber">
+            {s.flash}
+          </p>
         )}
       </div>
 
@@ -197,9 +219,7 @@ function Dash({ deltaTone }: { deltaTone: string }) {
               {s.gpsLock ? "Lock" : "Search"}
             </p>
           </div>
-          <p className="num mt-1 text-sm text-muted">
-            10 Hz · HDOP {s.hdop.toFixed(2)}
-          </p>
+          <p className="num mt-1 text-sm text-muted">10 Hz · HDOP {s.hdop.toFixed(2)}</p>
           <p className="num mt-2 text-xs text-dim">
             {s.lat.toFixed(6)} , {s.lon.toFixed(6)}
           </p>
@@ -232,7 +252,9 @@ function Dash({ deltaTone }: { deltaTone: string }) {
               <p className="label text-[11px] text-muted">
                 S{sec.id} {sec.name}
               </p>
-              <p className="num text-xl text-fg">{sec.timeS == null ? "—" : sec.timeS.toFixed(3)}</p>
+              <p className="num text-xl text-fg">
+                {sec.timeS == null ? "—" : sec.timeS.toFixed(3)}
+              </p>
               <p className={`num text-xs ${tone(sec.deltaS)}`}>{formatDelta(sec.deltaS)}</p>
             </li>
           ))}
@@ -264,8 +286,8 @@ function MapScreen() {
           <p className="num mt-1 text-4xl text-fg">{s.armed ? formatLap(s.lapElapsed) : "OUT"}</p>
           <p className={`num mt-1 text-2xl ${tone(s.deltaS)}`}>{formatDelta(s.deltaS)}</p>
           <p className="mt-3 text-sm text-muted">
-            Predictive delta compares distance along the centerline with the reference lap. Positive means
-            you are behind that lap at this point.
+            Predictive delta compares distance along the centerline with the reference lap. Positive
+            means you are behind that lap at this point.
           </p>
         </div>
         <div className="bezel rounded-lg p-4">
@@ -274,7 +296,7 @@ function MapScreen() {
             First crossing arms the clock. Every later crossing closes the lap and opens the next.
           </p>
           <p className="num mt-3 text-sm text-dim">
-            {(s.distM / s.lengthM * 100).toFixed(0)}% of { (s.lengthM / 1000).toFixed(2) } km
+            {((s.distM / s.lengthM) * 100).toFixed(0)}% of {(s.lengthM / 1000).toFixed(2)} km
           </p>
         </div>
       </div>
@@ -317,7 +339,9 @@ function LapsScreen() {
                 const isBest = best != null && Math.abs(lap.timeS - best) < 0.0005;
                 return (
                   <tr key={lap.number} className="border-b border-line/70">
-                    <td className="num px-4 py-2.5 text-fg">{String(lap.number).padStart(2, "0")}</td>
+                    <td className="num px-4 py-2.5 text-fg">
+                      {String(lap.number).padStart(2, "0")}
+                    </td>
                     <td className={`num px-3 py-2.5 ${isBest ? "text-amber" : "text-fg"}`}>
                       {formatLap(lap.timeS)}
                     </td>
@@ -366,7 +390,10 @@ function LogScreen() {
         ) : (
           <ul className="divide-y divide-line">
             {rows.map((r, i) => (
-              <li key={`${r.t}-${i}`} className="grid grid-cols-4 gap-2 px-4 py-2 text-xs sm:text-sm">
+              <li
+                key={`${r.t}-${i}`}
+                className="grid grid-cols-4 gap-2 px-4 py-2 text-xs sm:text-sm"
+              >
                 <span className="num text-muted">{r.t.toFixed(1)}s</span>
                 <span className="num text-fg">{r.speedKmh.toFixed(0)} km/h</span>
                 <span className="num text-dim">{r.lat.toFixed(5)}</span>
@@ -394,7 +421,7 @@ function LogScreen() {
 }
 
 const BOM = [
-  { part: "ESP32-S3 + 3.5\" 320×480", cost: "25–31", note: "Display, flash, PSRAM, touch" },
+  { part: 'ESP32-S3 + 3.5" 320×480', cost: "25–31", note: "Display, flash, PSRAM, touch" },
   { part: "BN-880 GNSS 10 Hz", cost: "10–15", note: "Position, speed, sats" },
   { part: "12V→5V 3A buck", cost: "~8", note: "V1 prototype power" },
   { part: "32 GB microSD", cost: "~6", note: "Session logs" },
@@ -411,9 +438,9 @@ function BuildScreen() {
         <p className="label text-xs text-amber">V1 · prove the chain</p>
         <h2 className="font-display mt-1 text-3xl leading-none text-fg">How fast was the lap?</h2>
         <p className="mt-3 text-sm leading-relaxed text-muted">
-          GPS into the ESP32-S3, start/finish detection, lap and sector times on the 3.5" dash, CSV on
-          MicroSD. Target about $90 delivered to Miami, $100 ceiling. This preview is that firmware’s
-          cockpit, driven by a simulated 10 Hz fix.
+          GPS into the ESP32-S3, start/finish detection, lap and sector times on the 3.5" dash, CSV
+          on MicroSD. Target about $90 delivered to Miami, $100 ceiling. This preview is that
+          firmware’s cockpit, driven by a simulated 10 Hz fix.
         </p>
         <ol className="mt-4 space-y-2 text-sm text-fg">
           {[
@@ -451,7 +478,9 @@ function BuildScreen() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="label text-xs text-signal">V2 · why the lap changed</p>
-            <h2 className="font-display mt-1 text-3xl leading-none text-fg">Where time was made or lost</h2>
+            <h2 className="font-display mt-1 text-3xl leading-none text-fg">
+              Where time was made or lost
+            </h2>
           </div>
           <button
             type="button"
@@ -468,7 +497,8 @@ function BuildScreen() {
         </div>
         <p className="mt-4 flex items-start gap-2 text-sm text-muted">
           <Timer size={16} className="mt-0.5 shrink-0 text-amber" />
-          Do not start at V2. Run V1 on a real lap, then spend the next dollars on GNSS, IMU, and power — not a bigger screen.
+          Do not start at V2. Run V1 on a real lap, then spend the next dollars on GNSS, IMU, and
+          power — not a bigger screen.
         </p>
       </article>
     </section>
@@ -492,7 +522,9 @@ function SensorScreen() {
       <div className="bezel rounded-lg p-4">
         <div className="flex items-center justify-between">
           <p className="label text-xs text-muted">G-meter</p>
-          <p className={`label text-xs ${live ? "text-signal" : "text-dim"}`}>{live ? "IMU live" : "IMU off"}</p>
+          <p className={`label text-xs ${live ? "text-signal" : "text-dim"}`}>
+            {live ? "IMU live" : "IMU off"}
+          </p>
         </div>
         <GMeter longG={gx} latG={gy} />
         <p className="num text-center text-4xl leading-none text-amber">
@@ -548,15 +580,32 @@ function GMeter({ longG, latG }: { longG: number; latG: number }) {
   const cx = 100 + x * 68;
   const cy = 100 + y * 68;
   return (
-    <svg viewBox="0 0 200 200" className="mx-auto my-2 aspect-square w-full max-w-56" role="img" aria-label="G-force meter">
+    <svg
+      viewBox="0 0 200 200"
+      className="mx-auto my-2 aspect-square w-full max-w-56"
+      role="img"
+      aria-label="G-force meter"
+    >
       <circle cx="100" cy="100" r="78" fill="var(--color-bg-2)" stroke="var(--color-line)" />
       <circle cx="100" cy="100" r="39" fill="none" stroke="var(--color-line)" />
       <path d="M100 22 V178 M22 100 H178" stroke="var(--color-line-strong)" />
       <circle cx={cx} cy={cy} r="8" fill="var(--color-amber)" />
-      <text x="112" y="46" fill="var(--color-dim)" fontSize="11" fontFamily="Barlow Condensed, sans-serif">
+      <text
+        x="112"
+        y="46"
+        fill="var(--color-dim)"
+        fontSize="11"
+        fontFamily="Barlow Condensed, sans-serif"
+      >
         ACCEL
       </text>
-      <text x="112" y="162" fill="var(--color-dim)" fontSize="11" fontFamily="Barlow Condensed, sans-serif">
+      <text
+        x="112"
+        y="162"
+        fill="var(--color-dim)"
+        fontSize="11"
+        fontFamily="Barlow Condensed, sans-serif"
+      >
         BRAKE
       </text>
     </svg>
@@ -585,7 +634,9 @@ function Axis({
         <p className="label text-xs text-muted">
           {k} <span className="tracking-normal text-dim">{hint}</span>
         </p>
-        <p className={`num text-lg ${v < -0.12 ? "text-delta" : v > 0.12 ? "text-signal" : "text-fg"}`}>
+        <p
+          className={`num text-lg ${v < -0.12 ? "text-delta" : v > 0.12 ? "text-signal" : "text-fg"}`}
+        >
           {signed(v, 2)} {unit}
         </p>
       </div>
@@ -620,7 +671,9 @@ function StatusPills() {
   const s = useSession();
   return (
     <div className="flex items-center gap-2">
-      <span className={`inline-flex items-center gap-1 text-xs ${s.running ? "text-signal" : "text-muted"}`}>
+      <span
+        className={`inline-flex items-center gap-1 text-xs ${s.running ? "text-signal" : "text-muted"}`}
+      >
         <span className={`size-2 rounded-full ${s.running ? "bg-signal" : "bg-dim"}`} />
         <span className="label">{s.running ? "Rec" : "Idle"}</span>
       </span>
@@ -633,7 +686,11 @@ function Stat({ k, v, tone, big }: { k: string; v: string; tone?: string; big?: 
   return (
     <div>
       <p className="label text-[11px] text-muted">{k}</p>
-      <p className={`num mt-1 ${big ? "text-3xl sm:text-4xl" : "text-xl sm:text-2xl"} ${tone ?? "text-fg"}`}>{v}</p>
+      <p
+        className={`num mt-1 ${big ? "text-3xl sm:text-4xl" : "text-xl sm:text-2xl"} ${tone ?? "text-fg"}`}
+      >
+        {v}
+      </p>
     </div>
   );
 }
@@ -644,7 +701,9 @@ function GCard({ k, v }: { k: string; v: number }) {
   return (
     <div className="bezel rounded-lg p-3">
       <p className="label text-[11px] text-muted">{k}</p>
-      <p className={`num mt-1 text-2xl ${v < -0.15 ? "text-delta" : v > 0.15 ? "text-signal" : "text-fg"}`}>
+      <p
+        className={`num mt-1 text-2xl ${v < -0.15 ? "text-delta" : v > 0.15 ? "text-signal" : "text-fg"}`}
+      >
         {v >= 0 ? "+" : ""}
         {v.toFixed(2)}
       </p>

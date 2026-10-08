@@ -31,6 +31,7 @@ import { parseRecording, replayRecording, type ReplayWarning } from "./recording
 import { recordingStats } from "./recording-stats.ts";
 import { formatLap } from "../timer/engine.ts";
 import { DragEngine, FT, distanceLabel, flagNames, rowToDragSample, speedLabel } from "./drag.ts";
+import { phoneReplayOptions } from "./phone.ts";
 
 const fmtT = (t: number) => t.toFixed(3);
 const SPEED0 = "──.--";
@@ -85,9 +86,19 @@ function main() {
   const track = trackFile
     ? compileTrack(parseTrackFile(readFileSync(trackFile, "utf8"), trackFile))
     : compileTrack(geoTrackFromSynthetic(getTrack(trackId)));
-  const r = replayRecording(text, track);
+  // A CSV from the phone screen carries its own quality/gap settings (phone.ts).
+  const phone = phoneReplayOptions(parseRecording(text).meta);
+  const r = replayRecording(
+    text,
+    track,
+    phone ? { engine: { quality: phone.quality }, gapThresholdMs: phone.gapThresholdMs } : {},
+  );
 
   console.log(`Apex Chrono — GNSS replay of ${file}`);
+  if (phone)
+    console.log(
+      `source: PHONE — no satellite count; HDOP column = accuracy in metres (max ${phone.quality.maxHdop} m); drag gap limit ${phone.gapThresholdMs} ms`,
+    );
   console.log(
     `track: ${track.id} (${r.meta.track ?? "default"})${r.meta.date ? `  date: ${r.meta.date}` : ""}\n`,
   );
@@ -98,7 +109,9 @@ function main() {
   const maxT = n ? r.rows[n - 1].timestampMs : 0;
   const durS = n ? (maxT - minT) / 1000 : 0;
   console.log(`rows parsed: ${n}  session ${durS.toFixed(1)} s`);
-  for (const w of r.warnings) console.log(`  warning: ${warnLine(w)}`);
+  // a phone reports no satellite count (row value 0): that is not a low-signal run
+  for (const w of r.warnings)
+    if (!(phone && w.kind === "low_sats_run")) console.log(`  warning: ${warnLine(w)}`);
 
   // Receiver health (test procedure §6 10 Hz, §10 stationary)
   const st = recordingStats(r.rows);
@@ -148,7 +161,7 @@ function main() {
 
   // Drag runs (independent of the track)
   const rollout = argv.includes("--rollout");
-  const drag = new DragEngine({ rolloutM: rollout ? FT : 0 });
+  const drag = new DragEngine({ ...(phone?.drag ?? {}), rolloutM: rollout ? FT : 0 });
   for (const row of r.rows) drag.push(rowToDragSample(row));
   drag.flush();
   const s2 = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "—");
