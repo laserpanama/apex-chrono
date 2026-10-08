@@ -1,4 +1,17 @@
 import type { Point, TrackDef } from "./tracks";
+import { LocalFrame } from "../gnss/geo.ts";
+import { compileTrack, type CompiledTrack } from "../gnss/track.ts";
+import { geoTrackFromSynthetic, SYNTHETIC_ORIGIN } from "../gnss/synthetic.ts";
+import { GpsLapEngine, type GpsLapRecord } from "../gnss/lap-engine.ts";
+import type { GnssFix } from "../gnss/fix.ts";
+
+/**
+ * Timing source for the preview.
+ * - "gps": laps/sectors come from the V1 GNSS pipeline (noisy 10 Hz fixes →
+ *   map matching → geographic gates → GpsLapEngine), exactly as on hardware.
+ * - "synthetic": the original distance-wrap logic, kept for UI work.
+ */
+export type TimingSource = "gps" | "synthetic";
 
 export type Sample = {
   t: number;
@@ -23,20 +36,29 @@ export type SectorSplit = {
 export type LapRecord = {
   number: number;
   timeS: number;
-  splits: number[];
+  /** null = that sector gate was not seen in order (GPS timing only) */
+  splits: (number | null)[];
   maxSpeedKmh: number;
   valid: boolean;
 };
 
-const ORIGIN_LAT = 8.9824;
-const ORIGIN_LON = -79.5199;
-const M_PER_DEG_LAT = 110540;
-const M_PER_DEG_LON = 111320 * Math.cos((ORIGIN_LAT * Math.PI) / 180);
+// Same WGS84 local frame the GNSS layer uses, so simulated fixes round-trip exactly.
+const FRAME = new LocalFrame(SYNTHETIC_ORIGIN);
 
 export function toLatLon(p: Point): { lat: number; lon: number } {
+  return FRAME.toGeo(p.x, p.y);
+}
+
+/** GNSS fix rate of the simulated receiver (BN-880 configured for 10 Hz). */
+export const GNSS_RATE_HZ = 10;
+
+function toLapRecord(r: GpsLapRecord): LapRecord {
   return {
-    lat: ORIGIN_LAT + p.y / M_PER_DEG_LAT,
-    lon: ORIGIN_LON + p.x / M_PER_DEG_LON,
+    number: r.number,
+    timeS: r.timeS,
+    splits: r.splits.slice(),
+    maxSpeedKmh: r.maxSpeedMs * 3.6,
+    valid: r.valid,
   };
 }
 
@@ -141,9 +163,16 @@ export class SessionEngine {
   seed = 7;
   lastSpeedMs = 0;
   prevGLong = 0;
+  timing: TimingSource = "gps";
+  compiled: CompiledTrack;
+  gps: GpsLapEngine;
+  private fixClock = 0;
+  private gpsSectorIndex = 0;
 
   constructor(track: TrackDef) {
     this.track = track;
+    this.compiled = compileTrack(geoTrackFromSynthetic(track));
+    this.gps = new GpsLapEngine(this.compiled);
     const built = framesOf(track.center);
     this.frames = built.frames;
     this.cum = built.cum;
@@ -165,8 +194,12 @@ export class SessionEngine {
       const pace = this.pace;
       const next = new SessionEngine(track);
       next.pace = pace;
+      next.timing = this.timing;
       return next;
     }
+    this.gps = new GpsLapEngine(this.compiled);
+    this.fixClock = 0;
+    this.gpsSectorIndex = 0;
     this.distM = 0;
     this.elapsed = 0;
     this.lapElapsed = 0;
@@ -195,6 +228,8 @@ export class SessionEngine {
     this.distM = this.track.lengthM * 0.93;
     this.lastSpeedMs = this.speedAt(this.distM);
     this.lapMaxSpeed = 0;
+    this.gps = new GpsLapEngine(this.compiled);
+    this.fixClock = 0;
   }
 
   pause() {
@@ -241,6 +276,15 @@ export class SessionEngine {
   /** Positive = behind the reference lap at this distance. */
   deltaS(): number | null {
     if (!this.armed) return null;
+    // GPS timing confirms a line crossing ~1–3 s after the car passes it (the
+    // crossing time is refined from fixes on both sides). In that window the
+    // old lap is still open while distance has already wrapped; show no delta.
+    if (
+      this.timing === "gps" &&
+      this.distM < this.track.lengthM * 0.25 &&
+      this.lapElapsed > this.refLapS * 0.5
+    )
+      return null;
     return this.lapElapsed - this.refTimeAt(this.distM) * this.pace;
   }
 
@@ -298,8 +342,33 @@ export class SessionEngine {
     };
   }
 
+  /** One simulated receiver fix at the current pose (noisy position, Doppler speed/course). */
+  gnssFix(): GnssFix {
+    const p = this.pose();
+    // True course over ground (0 = north, clockwise). `pose().heading` uses the
+    // screen's y-down convention for the map arrow, so derive course from the
+    // centerline tangent in east/north instead.
+    const f = this.frames[this.frameIndex(this.distM).i];
+    const course = ((Math.atan2(f.tx, f.ty) * 180) / Math.PI + 360) % 360;
+    const geo = toLatLon({
+      x: p.x + this.gauss() * this.gpsNoiseM,
+      y: p.y + this.gauss() * this.gpsNoiseM,
+    });
+    return {
+      t: this.elapsed,
+      lat: geo.lat,
+      lon: geo.lon,
+      speedMs: Math.max(0, p.speedMs + this.gauss() * 0.1),
+      courseDeg: course,
+      sats: 11 + Math.floor(this.rand() * 6),
+      hdop: 0.55 + this.rand() * 0.35,
+      fixType: 3,
+    };
+  }
+
   step(dt: number): { crossed: boolean; sectorCrossed: number | null } {
     if (!this.running) return { crossed: false, sectorCrossed: null };
+    if (this.timing === "gps") return this.stepGps(dt);
     const v0 = this.speedAt(this.distM);
     const beforeSector = this.armed ? this.sectorIndex(this.distM) : -1;
     const travel = v0 * dt;
@@ -364,8 +433,66 @@ export class SessionEngine {
     return { crossed, sectorCrossed };
   }
 
+  /**
+   * GPS timing: the car still moves along the synthetic speed profile, but
+   * laps and sectors are decided only by the GNSS pipeline from 10 Hz fixes
+   * stamped with simulated GNSS time — never by distance wrap or frame time.
+   */
+  private stepGps(dt: number): { crossed: boolean; sectorCrossed: number | null } {
+    const v0 = this.speedAt(this.distM);
+    this.distM += v0 * dt;
+    if (this.distM >= this.track.lengthM) this.distM -= this.track.lengthM;
+    this.elapsed += dt;
+    const gLong = (v0 - this.lastSpeedMs) / 9.81 / Math.max(dt, 0.016);
+    this.prevGLong = Math.max(-1.8, Math.min(1.2, gLong));
+    this.lastSpeedMs = v0;
+    const spd = v0 * 3.6;
+    if (spd > this.maxSpeedKmh) this.maxSpeedKmh = spd;
+
+    let crossed = false;
+    let sectorCrossed: number | null = null;
+    this.fixClock += dt;
+    const period = 1 / GNSS_RATE_HZ;
+    while (this.fixClock >= period - 1e-9) {
+      this.fixClock -= period;
+      for (const ev of this.gps.push(this.gnssFix())) {
+        if (ev.type === "lap") crossed = true;
+        else if (ev.type === "sector") sectorCrossed = ev.sector + 1;
+      }
+    }
+    this.syncFromGps();
+    return { crossed, sectorCrossed };
+  }
+
+  private syncFromGps() {
+    const live = this.gps.live(this.elapsed);
+    const wasArmed = this.armed;
+    this.armed = live.phase === "in_lap";
+    this.lapNumber = live.lapNumber;
+    this.lapElapsed = live.lapElapsedS ?? 0;
+    this.gpsSectorIndex = live.sectorIndex;
+    this.sectorClock = live.sectorElapsedS ?? 0;
+    this.currentSplits = live.currentSplits.slice(0, this.track.sectors.length);
+    if (this.gps.laps.length !== this.laps.length) {
+      this.laps = this.gps.laps.map(toLapRecord);
+      const prev = live.previousLap;
+      this.lastS = prev ? prev.timeS : null;
+    }
+    const best = live.bestLap;
+    this.bestS = best ? best.timeS : null;
+    this.bestSplits = best ? best.splits.slice() : Array(this.track.sectors.length).fill(null);
+    if (!wasArmed && this.armed) this.lapMaxSpeed = 0;
+    if (this.armed) this.lapMaxSpeed = Math.max(this.lapMaxSpeed, this.lastSpeedMs * 3.6);
+  }
+
+  /** Sector the car is in for display: GPS state machine in GPS mode, distance otherwise. */
+  currentSector(): number {
+    if (this.timing === "gps") return this.armed ? this.gpsSectorIndex : 0;
+    return this.sectorIndex(this.distM);
+  }
+
   sectorRows(): SectorSplit[] {
-    const liveIdx = this.armed ? this.sectorIndex(this.distM) : -1;
+    const liveIdx = this.armed ? this.currentSector() : -1;
     return this.track.sectors.map((s, i) => {
       const closed = this.currentSplits[i];
       const timeS = closed != null ? closed : i === liveIdx ? this.sectorClock : null;
@@ -449,7 +576,7 @@ export function csvFor(laps: LapRecord[], samples: Sample[]): string {
         "",
         "",
         lap.timeS.toFixed(3),
-        lap.splits.map((x) => x.toFixed(3)).join("|"),
+        lap.splits.map((x) => (x == null ? "" : x.toFixed(3))).join("|"),
       ].join(","),
     );
   }

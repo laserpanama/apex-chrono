@@ -8,7 +8,7 @@ V1 answers “how fast was the lap?” V2 answers “where was the time made or 
 
 1. Pick a track. The car sits on the grid until you press **Start**.
 2. The first pass of the start/finish stripe is the out-lap. The clock does not count yet.
-3. The next crossing arms the lap. Sector gates stamp on exit. Crossing the stripe closes the lap and starts the next one.
+3. The next crossing arms the lap. Sector gates stamp on exit. Crossing the stripe closes the lap and starts the next one. With GPS timing (the default) the lap is confirmed 1–3 s after the car crosses the line, once enough fixes from both sides are in.
 4. **Pause** holds the car. **Reset** clears the session, the lap sheet, and the log.
 
 Delta is time versus a reference lap at the same distance along the centerline. Positive is behind. It is only shown after the lap is armed.
@@ -87,6 +87,15 @@ The dev server listens on port 8080.
 npm run build      # production build, then DB migrate
 npm run typecheck
 npm test
+npm run test:timer     # GNSS timing layer: unit + integration tests
+npm run validate:gps   # 1000-lap × 6-noise-level validation → docs/V1_VALIDATION_REPORT.md
+npm run firmware:test  # C++ timing core vs TypeScript reference (needs g++)
 ```
 
 Stack: Vite, TanStack Start, React 19, Tailwind 4. Timer state lives in `src/lib/timer` (Zustand store, lap engine, track geometry). The screens are in `src/components/timer/AppShell.tsx`.
+
+## GPS timing (V1)
+
+Laps and sectors in the preview come from the same GNSS pipeline the hardware runs: noisy 10 Hz fixes → map matching onto the centerline → geographic gates → lap state machine, all timed from GNSS timestamps. The code is in `src/lib/gnss`, the C++ port for the ESP32-S3 is in `firmware/`. Open the app with `?timing=synthetic` for the old distance-based laps when working on UI only.
+
+See [V1_IMPLEMENTATION.md](V1_IMPLEMENTATION.md) for the design and [docs/V1_VALIDATION_REPORT.md](docs/V1_VALIDATION_REPORT.md) for measured accuracy.

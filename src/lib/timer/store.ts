@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import { SessionEngine, csvFor, type LapRecord, type Sample, type SectorSplit } from "./engine";
+import {
+  SessionEngine,
+  csvFor,
+  type LapRecord,
+  type Sample,
+  type SectorSplit,
+  type TimingSource,
+} from "./engine";
 import { TRACKS, getTrack, type TrackDef } from "./tracks";
 
 export type Screen = "dash" | "map" | "sensors" | "laps" | "log" | "build";
@@ -47,9 +54,20 @@ type Store = Snapshot & {
   setVersion: (v: "v1" | "v2") => void;
   tick: (dt: number) => void;
   exportCsv: () => string;
+  timing: TimingSource;
+  setTiming: (t: TimingSource) => void;
 };
 
+/** `?timing=synthetic` keeps the old distance-wrap lap logic for UI work; default is the GNSS pipeline. */
+function initialTiming(): TimingSource {
+  if (typeof window === "undefined") return "gps";
+  return new URLSearchParams(window.location.search).get("timing") === "synthetic"
+    ? "synthetic"
+    : "gps";
+}
+
 let engine = new SessionEngine(TRACKS[0]);
+engine.timing = initialTiming();
 
 function snap(): Snapshot {
   const p = engine.pose();
@@ -74,7 +92,7 @@ function snap(): Snapshot {
     lon: sample.lon,
     distM: p.distM,
     lengthM: engine.track.lengthM,
-    sectorIndex: engine.armed ? p.sectorIndex : 0,
+    sectorIndex: engine.armed ? engine.currentSector() : 0,
     sectorClock: engine.armed ? engine.sectorClock : 0,
     sectors: engine.sectorRows(),
     laps: engine.laps,
@@ -133,6 +151,12 @@ export const useSession = create<Store>((set, get) => ({
     set({ ...snap(), log: nextLog, flash });
   },
   exportCsv: () => csvFor(engine.laps, get().log),
+  timing: engine.timing,
+  setTiming: (timing) => {
+    engine = engine.reset();
+    engine.timing = timing;
+    set({ ...snap(), timing, log: [], flash: null });
+  },
 }));
 
 let raf = 0;

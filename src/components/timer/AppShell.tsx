@@ -326,7 +326,7 @@ function LapsScreen() {
                     </td>
                     {lap.splits.map((sp, i) => (
                       <td key={i} className="num px-3 py-2.5 text-muted">
-                        {sp.toFixed(3)}
+                        {sp == null ? "—" : sp.toFixed(3)}
                       </td>
                     ))}
                     <td className="num px-3 py-2.5 text-fg">{formatSpeed(lap.maxSpeedKmh)}</td>

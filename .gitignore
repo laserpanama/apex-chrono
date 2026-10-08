@@ -10,3 +10,8 @@ dist
 .env
 .env.*
 .DS_Store
+
+# firmware build outputs / regenerated host fixtures
+firmware/.pio
+firmware/test_host/build
+firmware/test_host/fixtures

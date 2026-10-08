@@ -16,7 +16,11 @@
     "preview:stop": "node scripts/preview.mjs stop",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts && npm run test:timer",
+    "test:timer": "node --experimental-strip-types --test 'src/lib/gnss/__tests__/*.test.ts'",
+    "validate:gps": "node --experimental-strip-types src/lib/gnss/validate-cli.ts",
+    "firmware:fixtures": "node --experimental-strip-types src/lib/gnss/export-fixtures.ts",
+    "firmware:test": "npm run firmware:fixtures && mkdir -p firmware/test_host/build && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o firmware/test_host/build/parity firmware/test_host/parity.cpp && firmware/test_host/build/parity",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
