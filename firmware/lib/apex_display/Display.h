@@ -1,55 +1,45 @@
 #pragma once
-// Apex Chrono V1.5 — minimal ST7789 status panel.
+// Apex Chrono V1.5 — ST7789 2" status panel, landscape 320x240.
 //
-// Plain text only: GNSS fix state, lap count/elapsed, last + best lap,
-// storage/IMU status. This is explicitly NOT a V2 telemetry dashboard — no
-// graphics, no track map, no g-force gauges.
+// What is shown is decided in DisplayModel.h (pure, host-tested). This class
+// only paints the eight lines, and only the ones whose text or colour
+// changed since the last frame. Partial redraws keep each refresh to a few
+// milliseconds of SPI (a full 320x240 clear is ~150 KB), so the main loop
+// keeps draining the GNSS UART.
 //
-// A missing/unresponsive panel can never stop timing. The ST7789 is a
-// write-only SPI display on this wiring (no MISO/readback path, which is
-// normal for these breakouts), so there is no reliable way to prove the chip
-// is actually present and responding before writing to it — see
-// docs/V1_5_HARDWARE.md for the honest limitation. The guarantee this class
-// DOES provide is architectural: it is a pure, stateless observer called
-// strictly after timing has already happened, so even a fully dead/missing
-// panel degrades to "no display", never to "no timing".
+// A missing or dead panel can never stop timing. The ST7789 wiring is
+// write-only (no MISO), so there is no electrical presence check; the
+// guarantee is architectural: Display is called after timing work, writes
+// a bounded number of bytes, and nothing reads its result. See
+// docs/V1_5_HARDWARE.md.
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <Arduino.h>
 #include <SPI.h>
 
-namespace apex {
+#include "DisplayModel.h"
 
-struct DisplayStatus {
-  bool gnssFix = false;
-  int sats = 0;
-  double hdop = 99.9;
-  bool trackReady = false;
-  bool inLap = false;
-  int lapNumber = 0;
-  double lapElapsedS = NAN;
-  bool haveLastLap = false;
-  double lastLapS = NAN;
-  bool lastLapValid = false;
-  bool haveBestLap = false;
-  double bestLapS = NAN;
-  bool sdCardPresent = false;
-  uint32_t sdRowsLogged = 0;
-  uint32_t sdFailures = 0;
-  bool imuOk = false;
-};
+namespace apex {
 
 class Display {
  public:
   bool begin(int csPin, int dcPin, int rstPin, int blPin, SPIClass& spi, int sckPin, int mosiPin);
-  void showStatus(const DisplayStatus& s);
+  // Paints the changed lines. Returns the time spent, in microseconds.
+  uint32_t show(const DisplayStatus& s);
   bool ok() const { return ok_; }
+  uint32_t lastRenderUs() const { return lastRenderUs_; }
+  uint32_t maxRenderUs() const { return maxRenderUs_; }
 
  private:
+  void paint(const DisplayLine& l);
+
   Adafruit_ST7789* tft_ = nullptr;
   bool ok_ = false;
-  int blPin_ = -1;
+  bool havePrev_ = false;
+  DisplayFrame prev_{};
+  uint32_t lastRenderUs_ = 0;
+  uint32_t maxRenderUs_ = 0;
 };
 
 }  // namespace apex

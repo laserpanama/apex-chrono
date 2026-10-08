@@ -1,78 +1,76 @@
 #include "Display.h"
 
-#include <cmath>
+#include <cstring>
+#include <new>
 
 namespace apex {
 
 namespace {
-// Common "2-inch" ST7789 breakout resolution. If your specific panel differs
-// (e.g. a 240x240 square 1.3"/1.54" module sold alongside "2-inch" ones),
-// change these two constants — there is no reliable way to auto-detect panel
-// size over a write-only SPI link without a MISO/ID-read wire.
-constexpr uint16_t kWidth = 240;
-constexpr uint16_t kHeight = 320;
-constexpr uint16_t kBg = 0x0000;   // black
-constexpr uint16_t kFg = 0xFFFF;   // white
-constexpr uint16_t kOk = 0x07E0;   // green
-constexpr uint16_t kBad = 0xF800;  // red
+// The panel is initialised in its native portrait 240x320, then rotated to
+// landscape 320x240. If the module is a 240x240 or 170x320 variant, change
+// these and the layout in DisplayModel.h — a write-only SPI link cannot
+// detect the panel size.
+constexpr uint16_t kNativeW = 240;
+constexpr uint16_t kNativeH = 320;
+constexpr uint8_t kRotation = 1;          // 1 = landscape, connector on the left; 3 flips it
+constexpr uint32_t kSpiHz = 40000000;     // drop to 27 MHz if the panel shows noise on long wires
+
+uint16_t toneColor(Tone t) {
+  switch (t) {
+    case Tone::Good: return ST77XX_GREEN;
+    case Tone::Bad: return ST77XX_RED;
+    case Tone::Dim: return 0x7BEF;  // mid grey
+    case Tone::Normal: break;
+  }
+  return ST77XX_WHITE;
+}
 }  // namespace
 
 bool Display::begin(int csPin, int dcPin, int rstPin, int blPin, SPIClass& spi, int sckPin, int mosiPin) {
-  blPin_ = blPin;
-  spi.begin(sckPin, -1 /* no MISO: write-only display */, mosiPin, csPin);
-  tft_ = new Adafruit_ST7789(&spi, csPin, dcPin, rstPin);
-  tft_->init(kWidth, kHeight);
-  tft_->setRotation(0);
-  tft_->fillScreen(kBg);
-  if (blPin_ >= 0) {
-    pinMode(blPin_, OUTPUT);
-    digitalWrite(blPin_, HIGH);
+  spi.begin(sckPin, -1 /* no MISO: write-only panel */, mosiPin, csPin);
+  tft_ = new (std::nothrow) Adafruit_ST7789(&spi, csPin, dcPin, rstPin);
+  if (!tft_) return ok_ = false;
+  tft_->init(kNativeW, kNativeH);
+  tft_->setSPISpeed(kSpiHz);
+  tft_->setRotation(kRotation);
+  tft_->setTextWrap(false);
+  tft_->fillScreen(ST77XX_BLACK);  // the only full clear; every later frame is partial
+  if (blPin >= 0) {
+    pinMode(blPin, OUTPUT);
+    digitalWrite(blPin, HIGH);
   }
-  // See the class-level note in Display.h: a write-only SPI panel cannot be
-  // reliably probed for presence. We optimistically report success once
-  // init() returns; a dead/missing panel is simply invisible, never a fault
-  // that propagates anywhere else in the firmware.
+  havePrev_ = false;
   ok_ = true;
   return ok_;
 }
 
-void Display::showStatus(const DisplayStatus& s) {
-  if (!ok_ || !tft_) return;
-  tft_->fillScreen(kBg);
-  tft_->setTextSize(2);
-  tft_->setCursor(4, 4);
+void Display::paint(const DisplayLine& l) {
+  // Text drawn with an explicit background overwrites the old glyphs; padding
+  // to the full line width erases whatever was longer last time.
+  char padded[sizeof(l.text)];
+  const int cols = displayColumns(l.size);
+  std::snprintf(padded, sizeof padded, "%-*s", cols, l.text);
+  tft_->setTextSize(l.size);
+  tft_->setTextColor(toneColor(l.tone), ST77XX_BLACK);
+  tft_->setCursor(kDisplayMarginPx, l.y);
+  tft_->print(padded);
+}
 
-  tft_->setTextColor(s.gnssFix ? kOk : kBad);
-  tft_->printf("GNSS %s\n", s.gnssFix ? "OK" : "NO FIX");
-  tft_->setTextColor(kFg);
-  tft_->printf("sat %d hdop %.1f\n\n", s.sats, s.hdop);
-
-  if (!s.trackReady) {
-    tft_->setTextColor(kBad);
-    tft_->println("NO TRACK");
-  } else {
-    tft_->setTextColor(kFg);
-    tft_->printf("Lap %d %s\n", s.lapNumber, s.inLap ? "" : "(out)");
-    if (s.inLap && std::isfinite(s.lapElapsedS)) tft_->printf("%.1fs\n", s.lapElapsedS);
-    tft_->println();
-    if (s.haveLastLap) {
-      tft_->setTextColor(s.lastLapValid ? kFg : kBad);
-      tft_->printf("Last %.3f\n", s.lastLapS);
-    }
-    if (s.haveBestLap) {
-      tft_->setTextColor(kOk);
-      tft_->printf("Best %.3f\n", s.bestLapS);
-    }
+uint32_t Display::show(const DisplayStatus& s) {
+  if (!ok_ || !tft_) return 0;
+  const uint32_t t0 = micros();
+  DisplayFrame f;
+  buildFrame(s, f);
+  for (int i = 0; i < kDisplayLineCount; i++) {
+    const DisplayLine& l = f.line[i];
+    if (havePrev_ && l.tone == prev_.line[i].tone && std::strcmp(l.text, prev_.line[i].text) == 0) continue;
+    paint(l);
   }
-
-  tft_->setTextColor(kFg);
-  tft_->println();
-  tft_->setTextColor(s.sdCardPresent ? kOk : kBad);
-  tft_->printf("SD %s", s.sdCardPresent ? "ok" : "--");
-  if (s.sdFailures) tft_->printf(" f%lu", static_cast<unsigned long>(s.sdFailures));
-  tft_->println();
-  tft_->setTextColor(s.imuOk ? kOk : kFg);
-  tft_->printf("IMU %s\n", s.imuOk ? "ok" : "--");
+  prev_ = f;
+  havePrev_ = true;
+  lastRenderUs_ = micros() - t0;
+  if (lastRenderUs_ > maxRenderUs_) maxRenderUs_ = lastRenderUs_;
+  return lastRenderUs_;
 }
 
 }  // namespace apex

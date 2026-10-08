@@ -1,0 +1,39 @@
+name: firmware
+
+# Compiles the ESP32-S3 firmware with PlatformIO and runs the host-side C++
+# tests (timing-core parity + display/IMU), on every push or PR that touches
+# the firmware or the TS reference engine the parity fixtures come from.
+
+on:
+  push:
+    paths: ["firmware/**", "src/lib/gnss/**", "package.json", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", "src/lib/gnss/**", "package.json", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Host tests (parity + display/IMU)
+        run: npm run firmware:test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: PlatformIO build (esp32-s3-devkitc-1, N32R16V overrides)
+        run: |
+          pip install -q platformio
+          cd firmware && pio run
