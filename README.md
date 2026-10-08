@@ -1,6 +1,10 @@
 # Apex Chrono
 
-Pit-wall dashboard for an ESP32-S3 lap timer. This repo is the cockpit preview: a simulated 10 Hz GNSS fix drives the same screens the V1 hardware is meant to show, so the timing chain can be checked before any parts are on the car.
+[![firmware](https://github.com/laserpanama/apex-chrono/actions/workflows/firmware.yml/badge.svg?branch=v1.5-hardware-readiness)](https://github.com/laserpanama/apex-chrono/actions/workflows/firmware.yml)
+
+GNSS lap timer: ESP32-S3 firmware plus a browser cockpit. The cockpit runs on a simulated 10 Hz GNSS fix and shows the same screens the hardware is meant to show, so the timing chain can be checked before any parts are on the car.
+
+**Status (V1.5):** software ready for physical validation. The firmware compiles and passes its host tests. **It has not been run on real hardware yet.** The procedure for doing that is [docs/V1_5_TEST_PROCEDURE.md](docs/V1_5_TEST_PROCEDURE.md).
 
 V1 answers “how fast was the lap?” V2 answers “where was the time made or lost?”
 
@@ -17,14 +21,14 @@ GPS lock is green when the simulated fix has at least 8 satellites and HDOP unde
 
 ## Screens
 
-| Screen | What it shows |
-| --- | --- |
-| Dash | Lap clock, predictive delta, best, last, speed, sector, sats, HDOP |
-| Map | Car on the centerline, with the start/finish stripe and sector gates |
-| IMU | G-meter plus accelerometer and gyro readouts. Live only in V2 |
-| Laps | Closed laps, with sector splits when the lap recorded them |
-| Log | Session CSV, same idea as a V1 MicroSD file |
-| Build | V1 parts list and the V1 → V1.5 → V2 spend order |
+| Screen | What it shows                                                        |
+| ------ | -------------------------------------------------------------------- |
+| Dash   | Lap clock, predictive delta, best, last, speed, sector, sats, HDOP   |
+| Map    | Car on the centerline, with the start/finish stripe and sector gates |
+| IMU    | G-meter plus accelerometer and gyro readouts. Live only in V2        |
+| Laps   | Closed laps, with sector splits when the lap recorded them           |
+| Log    | Session CSV, same idea as a V1 MicroSD file                          |
+| Build  | V1 parts list and the V1 → V1.5 → V2 spend order                     |
 
 **V1 timer** is the GPS lap timer and lands you on the dash. **V2 telemetry** turns the IMU board on and opens that screen. With V2 off, the G-meter sits at zero and the label reads “IMU off”.
 
@@ -32,11 +36,11 @@ GPS lock is green when the simulated fix has at least 8 satellites and HDOP unde
 
 All three are closed loops, driven counterclockwise from the stripe.
 
-| Track | Character | Sectors | Reference lap |
-| --- | --- | --- | --- |
-| Club Circuit | Practice loop, about 2.4 km | Start straight, Hairpin complex, Back straight | 78.4 s |
-| Marina Street | Technical street course | Promenade, Chicane, Harbor, Pit exit | 92.6 s |
-| Pacific Ring | High-speed | Main straight, Esses, Final corner | 64.2 s |
+| Track         | Character                   | Sectors                                        | Reference lap |
+| ------------- | --------------------------- | ---------------------------------------------- | ------------- |
+| Club Circuit  | Practice loop, about 2.4 km | Start straight, Hairpin complex, Back straight | 78.4 s        |
+| Marina Street | Technical street course     | Promenade, Chicane, Harbor, Pit exit           | 92.6 s        |
+| Pacific Ring  | High-speed                  | Main straight, Esses, Final corner             | 64.2 s        |
 
 Speed follows the corner radius. A tighter turn slows the car and raises lateral G. The reference lap is the baseline for the live delta, not a recorded personal best. Your best is whatever this session actually closes.
 
@@ -66,13 +70,15 @@ type,t_s,lap,lat,lon,speed_kmh,heading_deg,sats,hdop,g_long,g_lat,dist_m,lap_tim
 
 V1 target is about $90 delivered, $100 ceiling. The Build screen lists the shopping list: ESP32-S3 with a 3.5" 320×480 display, BN-880 GNSS at 10 Hz, a 12V→5V buck, microSD, fuse, wiring, and a dash box.
 
-| Stage | Budget | Job |
-| --- | --- | --- |
-| V1 | $85–100 | GPS lap timer. Prove detection, the display, and logging |
-| V1.5 | $120–160 | Better power, antenna, IMU, and mounts |
-| V2 | $160–200 | IMU, live delta, sectors, braking and corner story |
+| Stage | Budget   | Job                                                      |
+| ----- | -------- | -------------------------------------------------------- |
+| V1    | $85–100  | GPS lap timer. Prove detection, the display, and logging |
+| V1.5  | $120–160 | Better power, antenna, IMU, and mounts                   |
+| V2    | $160–200 | IMU, live delta, sectors, braking and corner story       |
 
 Run a real V1 lap before spending the next dollars. The extra money goes to GNSS, IMU, and power, not a bigger screen.
+
+The Build screen is the original V1 plan. The prototype the V1.5 firmware actually targets uses a 2" ST7789 (320×240) and a BMI270 IMU. Its parts list and wiring are in [docs/V1_5_BOM.md](docs/V1_5_BOM.md).
 
 ## Run
 
@@ -89,8 +95,12 @@ npm run typecheck
 npm test
 npm run test:timer     # GNSS timing layer: unit + integration tests
 npm run validate:gps   # 1000-lap × 6-noise-level validation → docs/V1_VALIDATION_REPORT.md
-npm run firmware:test  # C++ timing core vs TypeScript reference (needs g++)
+npm run firmware:test  # C++ timing core vs TypeScript reference + display/IMU host tests (needs g++)
+npm run replay:gps -- <file.csv> [--track club|street|fast | --track-file <file.track>]
+npm run track:check -- <file.track>   # validate a real-circuit track file
 ```
+
+`npm test` stops early: 15 template tests in `scripts/` fail because `.grok/` and `public/__grok/` are not in the repo. `npm run test:timer` is the authoritative timing suite.
 
 Stack: Vite, TanStack Start, React 19, Tailwind 4. Timer state lives in `src/lib/timer` (Zustand store, lap engine, track geometry). The screens are in `src/components/timer/AppShell.tsx`.
 
@@ -98,4 +108,42 @@ Stack: Vite, TanStack Start, React 19, Tailwind 4. Timer state lives in `src/lib
 
 Laps and sectors in the preview come from the same GNSS pipeline the hardware runs: noisy 10 Hz fixes → map matching onto the centerline → geographic gates → lap state machine, all timed from GNSS timestamps. The code is in `src/lib/gnss`, the C++ port for the ESP32-S3 is in `firmware/`. Open the app with `?timing=synthetic` for the old distance-based laps when working on UI only.
 
-See [V1_IMPLEMENTATION.md](V1_IMPLEMENTATION.md) for the design and [docs/V1_VALIDATION_REPORT.md](docs/V1_VALIDATION_REPORT.md) for measured accuracy.
+See [V1_IMPLEMENTATION.md](V1_IMPLEMENTATION.md) for the design and [docs/V1_VALIDATION_REPORT.md](docs/V1_VALIDATION_REPORT.md) for measured accuracy. That accuracy comes from simulation, not from a real receiver.
+
+## V1.5 hardware
+
+Target: ESP32-S3-DevKitC-1 **N32R16V** (WROOM-2, Octal flash and PSRAM), BN-880Q GNSS at 10 Hz, 2" ST7789 320×240, microSD, BMI270 IMU. The pin map lives in `firmware/include/pins.h`, and the build fails on a pin conflict.
+
+| Module  | Path                        | Job                                                                                   |
+| ------- | --------------------------- | ------------------------------------------------------------------------------------- |
+| GNSS    | `firmware/lib/apex_gnss`    | UART1 NMEA → contract rows + engine fixes, GNSS timestamps                            |
+| Timer   | `firmware/lib/apex_timer`   | Track + lap engine (`apex_timing.h`, parity-tested against TS)                        |
+| Storage | `firmware/lib/apex_storage` | Raw GNSS CSV on microSD ([contract](docs/GNSS_DATA_CONTRACT.md))                      |
+| Display | `firmware/lib/apex_display` | GNSS lock, sats, HDOP, timing status, lap time, lap, sector, last/best, SD, IMU       |
+| IMU     | `firmware/lib/apex_imu`     | BMI270 via Bosch Sensor API, accel/gyro samples with timestamps (not used for timing) |
+
+Timing never depends on the SD card, display or IMU. If any of them fails, that feature goes off and timing keeps running.
+
+Build and flash from `firmware/`, using the DevKitC **UART** port:
+
+```bash
+pio run -t upload && pio device monitor -b 115200 -f time -f log2file
+```
+
+After each boot, paste the circuit's `.track` file into the monitor. The device answers `TRACK,OK`. The SD card records every fix. Replay a session on the desktop with the same track file:
+
+```bash
+npm run replay:gps -- APEX_YYYYMMDD_HHMM.CSV --track-file my-circuit.track
+```
+
+CI compiles the firmware with PlatformIO on every push that touches `firmware/` and runs the host tests ([workflow](.github/workflows/firmware.yml)).
+
+| Doc                                                        | What                                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [docs/V1_5_TEST_PROCEDURE.md](docs/V1_5_TEST_PROCEDURE.md) | 15-step physical validation with PASS/FAIL criteria, plus the first bench session |
+| [docs/V1_5_BOM.md](docs/V1_5_BOM.md)                       | Prototype parts, wiring table, power, test equipment                              |
+| [docs/V1_5_HARDWARE.md](docs/V1_5_HARDWARE.md)             | Firmware architecture, display/IMU, board config, build results, open items       |
+| [docs/V1_5_ARCHITECTURE.md](docs/V1_5_ARCHITECTURE.md)     | V1.5 pipeline audit and blockers                                                  |
+| [docs/GNSS_DATA_CONTRACT.md](docs/GNSS_DATA_CONTRACT.md)   | Fix/row format shared by firmware, SD and replay                                  |
+
+Not yet tested on hardware. Known gaps: tracks are loaded over serial only, the IMU is not logged to SD, the IMU axes are not mapped to the car, and the display timing is unmeasured. The full list is in `docs/V1_5_HARDWARE.md` §9.
