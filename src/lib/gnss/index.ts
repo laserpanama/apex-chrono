@@ -13,3 +13,4 @@ export * from "./track.ts";
 export * from "./gates.ts";
 export * from "./lap-engine.ts";
 export * from "./synthetic.ts";
+export * from "./recording.ts";

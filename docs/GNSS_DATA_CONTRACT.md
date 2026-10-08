@@ -8,7 +8,7 @@ This is the contract between the GNSS receiver and the timing engine. Every inpu
 
 The timing engine (`src/lib/gnss`, and its C++ twin `firmware/lib/apex_timing`) consumes nothing else.
 
-Status: **defined for V1.5**. Sections marked *(Task 2)* describe the recording file that V1.5 Task 2 implements. As of commit `f33d80f` there is no recorder or replay parser on any committed branch.
+Status: **implemented for V1.5** — the recording file (§6) is written by the TS `CsvRecorder` (`src/lib/gnss/recording.ts`), parsed by `parseRecording`, and replayed through the shared timing engine by `npm run replay:gps -- <file>`. Committed fixtures live in `fixtures/recording/`.
 
 ## 1. One fix = one row
 
@@ -123,4 +123,4 @@ A source conforms when:
 1. every row satisfies §1 types and units, with "not reported" written as empty;
 2. `timestamp_ms` comes from the receiver's time of fix (§3);
 3. it feeds the engine only through the §2 adapter;
-4. replaying its own output through the engine gives bit-identical laps, sector splits and events on every run (deterministic replay, Task 2).
+4. replaying its own output through the engine gives bit-identical laps, sector splits and events on every run (deterministic replay). **Implemented**: `npm run replay:gps -- <file>` replays a recording via the shared `GpsLapEngine`; determinism is tested (same file twice → identical laps/sectors/gates/timing) and the golden fixture lives in `fixtures/recording/`.

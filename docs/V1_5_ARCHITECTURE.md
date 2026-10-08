@@ -85,3 +85,15 @@ None of these require changing the validated algorithms (coordinate conversion, 
 5. TS `.track` reader. (B7)
 
 Out of scope until later tasks: the TFT display, IMU, SD track loading, the C++ `LiveState` (B6) and the real-track cockpit (B8).
+
+## 5. Task 2 done on `v1.5-hardware-readiness`
+
+The recording + replay half of Task 2 is implemented **on the TypeScript side**:
+
+- `src/lib/gnss/recording.ts` — contract §6 writer (`CsvRecorder`, chunked, failure-tolerant: a dead sink is counted and never blocks/stops the engine), reader (`parseRecording`: header-by-name, unknown-column tolerant, gap/duplicate/backwards-timestamp diagnostics, low-SNR runs, malformed-row handling), adapters (`rowToFix`/`fixToRow`, the only contract↔engine conversion), and `replayRecording` which feeds the shared `GpsLapEngine`.
+- `npm run replay:gps -- <file> [--track <id>]` — deterministic replay CLI (`src/lib/gnss/replay-cli.ts`).
+- `npm run fixtures:recording` — regenerates the committed fixtures (`src/lib/gnss/export-recording-fixtures.ts`):
+  - `fixtures/recording/golden_10hz.csv` — realistic 10 Hz session (12 laps, club, noise 2 m, degraded-quality + dropped fixes).
+  - `fixtures/recording/stress_30min_18000.csv` — 10 Hz / 30 min / 18,000 fixes.
+- Tests: `src/lib/gnss/__tests__/recording.test.ts` (13 tests) — deterministic replay (same file twice → identical laps/sectors/gates/timing), gap/duplicate/backwards detection with engine rejection, malformed handling, the 18,000-fix stress (replays in < 0.5 s), and the "logging failure never stops timing" guarantee.
+- Remaining in Task 2 scope: firmware contract writer + GGA fix_quality + the driver split (B4/B5) and the TS `.track` reader (B7) are **not yet** in this change — the fixtures here use the synthetic tracks via `--track`/metadata.

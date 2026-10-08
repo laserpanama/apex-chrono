@@ -20,6 +20,8 @@
     "test:timer": "node --experimental-strip-types --test 'src/lib/gnss/__tests__/*.test.ts'",
     "validate:gps": "node --experimental-strip-types src/lib/gnss/validate-cli.ts",
     "firmware:fixtures": "node --experimental-strip-types src/lib/gnss/export-fixtures.ts",
+    "fixtures:recording": "node --experimental-strip-types src/lib/gnss/export-recording-fixtures.ts",
+    "replay:gps": "node --experimental-strip-types src/lib/gnss/replay-cli.ts",
     "firmware:test": "npm run firmware:fixtures && mkdir -p firmware/test_host/build && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o firmware/test_host/build/parity firmware/test_host/parity.cpp && firmware/test_host/build/parity",
     "lint": "eslint .",
     "format": "prettier --write ."
