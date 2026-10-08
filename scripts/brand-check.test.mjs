@@ -321,7 +321,7 @@ test("SKILL.md and AGENTS.md name the marker path and bound this script uses", (
 const PROHIBITION_SECTIONS = [
   {
     rel: ".grok/skills/og/SKILL.md",
-    label: '\u00a7 "Brand-asset pass"',
+    label: '§ "Brand-asset pass"',
     from: "## Brand-asset pass:",
     until: /\n## /,
   },
