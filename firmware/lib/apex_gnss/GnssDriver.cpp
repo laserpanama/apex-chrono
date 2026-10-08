@@ -5,6 +5,11 @@ namespace apex {
 namespace {
 constexpr uint32_t kGnssBaudDefault = 9600;    // BN-880Q power-on default
 constexpr uint32_t kGnssBaud = 115200;         // configured rate for 10 Hz NMEA
+// UART RX buffer. The core default (256 B) holds ~170 ms of GGA+RMC at 10 Hz;
+// 4 KB holds ~2.7 s, so a slow SD write, a display refresh or an I2C timeout
+// delays fix processing (timestamps come from the receiver, so no accuracy is
+// lost) instead of dropping NMEA bytes. Must be set before every begin().
+constexpr size_t kRxBufferBytes = 4096;
 }  // namespace
 
 void GnssDriver::ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len) {
@@ -29,11 +34,13 @@ void GnssDriver::configureReceiver(int rxPin, int txPin) {
                             static_cast<uint8_t>(baud), static_cast<uint8_t>(baud >> 8),
                             static_cast<uint8_t>(baud >> 16), static_cast<uint8_t>(baud >> 24),
                             0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
+  uart_.setRxBufferSize(kRxBufferBytes);
   uart_.begin(kGnssBaudDefault, SERIAL_8N1, rxPin, txPin);
   delay(100);
   ubxSend(0x06, 0x00, prt, sizeof prt);
   delay(150);
   uart_.end();
+  uart_.setRxBufferSize(kRxBufferBytes);
   uart_.begin(kGnssBaud, SERIAL_8N1, rxPin, txPin);
   delay(100);
   // CFG-RATE: measRate 100 ms (10 Hz), navRate 1, timeRef UTC.

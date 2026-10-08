@@ -4,25 +4,32 @@
 // docs/V1_5_HARDWARE.md):
 //   GnssDriver    firmware/lib/apex_gnss     BN-880Q UART1 -> contract rows + apex::GnssFix
 //   SdLogger      firmware/lib/apex_storage  microSD, raw contract CSV (Task 2 format)
-//   Display       firmware/lib/apex_display  ST7789 status panel (read-only observer)
-//   Imu           firmware/lib/apex_imu      BMI270 wiring check (see its class note)
+//   Display       firmware/lib/apex_display  ST7789 320x240 status panel (observer)
+//   Imu           firmware/lib/apex_imu      BMI270 via Bosch Sensor API (observer, not used for timing)
 //   TimerService  firmware/lib/apex_timer    Track + apex::LapEngine (apex_timing.h UNCHANGED/frozen)
 //
-// GNSS -> Timer is the only critical path. Storage, Display and IMU are all
-// called strictly AFTER a fix has already been timed, and none of their
-// return values can gate or delay the next GNSS poll or any future timing
-// call: a dead SD card, a missing display or an absent IMU degrade to
-// "feature off", never to "timing off".
+// GNSS -> Timer is the only critical path. Storage, IMU and Display run
+// strictly after the fixes available this iteration have been timed, and no
+// return value of theirs can gate or delay timing: a dead SD card, a missing
+// display or an absent IMU degrade to "feature off", never "timing off".
+//
+// Serial (UART0 / USB, 115200) output used by docs/V1_5_TEST_PROCEDURE.md:
+//   APEX_CHRONO,V1.5,BOOT,...     once, peripheral bring-up result
+//   IMU,...                       once, BMI270 init + communication test detail
+//   EVT,...                       timing events (unchanged from V1)
+//   STAT,...                      once per second, health snapshot
 
 #include <Arduino.h>
 #include <SPI.h>
 
 #include "Display.h"
+#include "DisplayModel.h"
 #include "GnssContractRow.h"
 #include "GnssDriver.h"
 #include "Imu.h"
 #include "SdLogger.h"
 #include "TimerService.h"
+#include "TimingView.h"
 #include "apex_timing.h"
 #include "pins.h"
 
@@ -36,8 +43,22 @@ static SPIClass sdSpi(FSPI);   // dedicated bus for microSD
 static SPIClass tftSpi(HSPI);  // dedicated bus for the ST7789 — never shared with SD
 
 static bool sdOk = false, displayOk = false, imuOk = false;
+
+// GNSS state kept across loop() iterations (poll() locals only see this call's bytes).
+static apex::GnssSnapshot gnssView;
+static apex::SectorTracker sectors;  // current sector, mirrored from engine events
+static uint32_t lastFixMs = 0;
+
 static uint32_t lastDisplayMs = 0;
-static uint32_t lastImuMs = 0;
+static uint32_t lastStatMs = 0;
+static uint32_t fixesAtLastStat = 0;
+static uint32_t imuSamplesAtLastStat = 0;
+static int gnssHz = 0;
+static int imuHz = 0;
+
+static constexpr uint32_t kDisplayPeriodMs = 200;  // 5 Hz panel refresh
+static constexpr uint32_t kStatPeriodMs = 1000;    // 1 Hz serial health line
+static constexpr uint32_t kGnssStaleMs = static_cast<uint32_t>(apex::kLockStaleS * 1000);
 
 static void logEvent(const apex::Event& e) {
   switch (e.type) {
@@ -65,6 +86,51 @@ static void logEvent(const apex::Event& e) {
   }
 }
 
+static apex::SdStatus sdStatus() {
+  if (!sd.cardPresent()) return apex::SdStatus::NoCard;
+  if (sd.gaveUp()) return apex::SdStatus::Failed;
+  return sd.fileOpen() ? apex::SdStatus::Logging : apex::SdStatus::Ready;
+}
+
+static apex::ImuStatus imuStatus() {
+  switch (imu.state()) {
+    case apex::ImuState::Running: return apex::ImuStatus::Running;
+    case apex::ImuState::Failed: return apex::ImuStatus::Failed;
+    default: return apex::ImuStatus::Off;
+  }
+}
+
+static const char* timingName(apex::TimingStatus t) {
+  switch (t) {
+    case apex::TimingStatus::NoTrack: return "no_track";
+    case apex::TimingStatus::NoFix: return "no_fix";
+    case apex::TimingStatus::WaitStart: return "wait_start";
+    case apex::TimingStatus::InLap: return "in_lap";
+  }
+  return "?";
+}
+
+static const char* sdName(apex::SdStatus s) {
+  switch (s) {
+    case apex::SdStatus::NoCard: return "no_card";
+    case apex::SdStatus::Ready: return "ready";
+    case apex::SdStatus::Logging: return "logging";
+    case apex::SdStatus::Failed: return "failed";
+  }
+  return "?";
+}
+
+static void printImuBoot() {
+  const apex::ImuCore& c = imu.core();
+  const apex::ImuCommTest& t = c.commTest();
+  Serial.printf(
+      "IMU,state=%s,addr=0x%02X,chip=0x%02X,bosch=%d,comm_reads=%d,fresh_acc=%d,fresh_gyr=%d,time_adv=%d,"
+      "not_stuck=%d,mag_g=%.3f,gravity_ok=%d,acc_range_g=%d,gyr_range_dps=%d,odr_hz=%d\n",
+      apex::imuStateName(c.state()), imu.address(), c.chipId(), imu.lastBoschResult(), t.reads, t.freshAcc,
+      t.freshGyr, t.timeAdvanced, t.notStuck, t.accelMagG, t.gravityPlausible, c.config().accelRangeG,
+      c.config().gyroRangeDps, c.config().odrHz);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -76,30 +142,25 @@ void setup() {
   displayOk = display.begin(apex::pins::TFT_CS, apex::pins::TFT_DC, apex::pins::TFT_RST, apex::pins::TFT_BL,
                             tftSpi, apex::pins::TFT_SCLK, apex::pins::TFT_MOSI);
   imuOk = imu.begin(apex::pins::IMU_SDA, apex::pins::IMU_SCL);
+  // Future IMU logging plugs in here: imu.setSink(&someLogger) — see ImuSink in ImuCore.h.
 
   Serial.printf("APEX_CHRONO,V1.5,BOOT,sd=%d,display=%d,imu=%d\n", sdOk, displayOk, imuOk);
+  printImuBoot();
   Serial.println("APEX_CHRONO,V1.5,GNSS_READY,send track then END");
 }
 
 void loop() {
   if (!timer.trackReady() && Serial.available()) timer.loadTrackFrom(Serial);
 
-  // Last known fix, kept across loop() iterations for the display block
-  // below (the `fix`/`row` locals here only reflect bytes decoded THIS
-  // call, so they must never be read once the poll loop below returns
-  // false for this iteration).
-  static bool haveFix = false;
-  static apex::GnssFix lastFix{};
-
+  // ── Critical path: drain GNSS, log, time. ──
   apex::ContractRow row;
   apex::GnssFix fix;
   while (gnss.poll(row, fix)) {
-    haveFix = true;
-    lastFix = fix;
+    gnssView.haveFix = true;
+    gnssView.last = fix;
+    lastFixMs = millis();
 
-    // Storage is an observer: it runs AFTER the row already exists, and its
-    // outcome never gates or delays the timing push below (SD failure must
-    // not stop timing).
+    // Storage is an observer: its outcome never gates the timing push below.
     apex::SessionDate date;
     date.valid = gnss.dateValid();
     if (date.valid) {
@@ -114,50 +175,55 @@ void loop() {
     if (timer.trackReady()) {
       apex::Event ev[apex::MAX_EVENTS];
       const int n = timer.pushFix(fix, ev);
-      for (int i = 0; i < n; i++) logEvent(ev[i]);
+      for (int i = 0; i < n; i++) {
+        sectors.onEvent(ev[i], timer.engine());
+        logEvent(ev[i]);
+      }
     }
   }
 
   const uint32_t now = millis();
+  gnssView.stale = !gnssView.haveFix || now - lastFixMs > kGnssStaleMs;
 
-  // IMU: best-effort, ~20 Hz, independent of GNSS cadence. A failed read
-  // (or begin() never having succeeded) just skips this block — see Imu.h
-  // for why the data isn't characterized/used for anything yet.
-  if (imuOk && now - lastImuMs >= 50) {
-    lastImuMs = now;
-    apex::ImuSample s;
-    imu.readRaw(s);  // diagnostic only, intentionally unused beyond bring-up
-  }
+  // ── Observers. Each is bounded in time and ignored by timing. ──
+  // IMU: Running only after init + communication test passed; Failed after
+  // repeated read errors. poll() is a no-op otherwise.
+  imu.poll();
 
-  // Display: throttled refresh. Plenty for a text status panel and far
-  // below the SPI bus's capacity, so it can never starve GNSS/timer work.
-  if (displayOk && now - lastDisplayMs >= 200) {
+  if (displayOk && now - lastDisplayMs >= kDisplayPeriodMs) {
     lastDisplayMs = now;
     apex::DisplayStatus st;
-    st.gnssFix = haveFix && lastFix.fixType >= 2;
-    st.sats = haveFix ? lastFix.sats : 0;
-    st.hdop = haveFix ? lastFix.hdop : 99.9;
-    st.trackReady = timer.trackReady();
-
-    const apex::LapEngine& eng = timer.engine();
-    st.inLap = eng.inLapNow();
-    st.lapNumber = eng.currentLapNumber();
-    if (st.inLap && haveFix) st.lapElapsedS = lastFix.t - eng.lapStartTime();
-
-    const apex::LapRecord* last = eng.lastLap();
-    st.haveLastLap = last != nullptr;
-    if (last) {
-      st.lastLapS = last->timeS;
-      st.lastLapValid = last->valid;
-    }
-    st.haveBestLap = eng.haveBest;
-    if (eng.haveBest) st.bestLapS = eng.bestLap.timeS;
-
-    st.sdCardPresent = sd.cardPresent();
-    st.sdRowsLogged = sd.rowsLogged();
+    apex::fillTiming(timer.engine(), sectors, timer.trackReady(), gnssView, st);
+    st.sd = sdStatus();
+    st.sdRows = sd.rowsLogged();
     st.sdFailures = sd.failures();
-    st.imuOk = imu.ok();
+    st.imu = imuStatus();
+    st.imuHz = imuHz;
+    display.show(st);
+  }
 
-    display.showStatus(st);
+  if (now - lastStatMs >= kStatPeriodMs) {
+    const uint32_t dt = lastStatMs ? now - lastStatMs : kStatPeriodMs;
+    lastStatMs = now;
+    const uint32_t fixes = gnss.fixesSeen();
+    const uint32_t imuSamples = imu.core().samples();
+    gnssHz = static_cast<int>((fixes - fixesAtLastStat) * 1000UL / dt);
+    imuHz = static_cast<int>((imuSamples - imuSamplesAtLastStat) * 1000UL / dt);
+    fixesAtLastStat = fixes;
+    imuSamplesAtLastStat = imuSamples;
+
+    apex::DisplayStatus st;
+    apex::fillTiming(timer.engine(), sectors, timer.trackReady(), gnssView, st);
+    const apex::ImuSample& s = imu.core().latest();
+    Serial.printf(
+        "STAT,ms=%lu,fixes=%lu,gnss_hz=%d,lock=%d,sats=%d,hdop=%.2f,timing=%s,lap=%d,sector=%d/%d,"
+        "sd=%s,rows=%lu,sd_fail=%lu,imu=%s,imu_hz=%d,imu_fail=%lu,ax=%.2f,ay=%.2f,az=%.2f,gx=%.2f,gy=%.2f,gz=%.2f,"
+        "disp_us=%lu,disp_max_us=%lu\n",
+        static_cast<unsigned long>(now), static_cast<unsigned long>(fixes), gnssHz, st.gnssLock, st.sats,
+        std::isfinite(st.hdop) ? st.hdop : 99.9, timingName(st.timing), st.lapNumber, st.sector, st.sectorCount,
+        sdName(sdStatus()), static_cast<unsigned long>(sd.rowsLogged()), static_cast<unsigned long>(sd.failures()),
+        apex::imuStateName(imu.state()), imuHz, static_cast<unsigned long>(imu.core().readFailures()), s.ax, s.ay,
+        s.az, s.gx, s.gy, s.gz, static_cast<unsigned long>(display.lastRenderUs()),
+        static_cast<unsigned long>(display.maxRenderUs()));
   }
 }

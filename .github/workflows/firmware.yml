@@ -1,0 +1,49 @@
+name: firmware
+
+# Compiles the ESP32-S3 firmware with PlatformIO and runs the host-side C++
+# tests (timing-core parity + display/IMU), on every push or PR that touches
+# the firmware or the TS reference engine the parity fixtures come from.
+
+on:
+  push:
+    paths: ["firmware/**", "src/lib/gnss/**", "package.json", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", "src/lib/gnss/**", "package.json", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Host tests (parity + display/IMU)
+        run: |
+          set -o pipefail
+          npm run firmware:test | tee host-tests.log
+          echo "::notice title=host tests::$(grep -E '^(PASS|FAIL) ' host-tests.log | tr '\n' ' ')"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: PlatformIO build (esp32-s3-devkitc-1, N32R16V overrides)
+        run: |
+          set -o pipefail
+          pip install -q platformio
+          cd firmware && pio run | tee pio.log
+          # Sizes + resolved package versions as annotations (visible on the run page and via the API).
+          echo "::notice title=firmware size::$(grep -E '^(RAM|Flash):' pio.log | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=platform::$(grep -E '^PLATFORM:|framework-arduinoespressif32|toolchain-xtensa' pio.log | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=libraries::$(grep -E '^\|-- ' pio.log | tr -s ' ' | tr '\n' ' ')"
+          OWN=$(grep 'warning:' pio.log | grep -E '(lib/apex_|src/main|include/pins)' | sort -u | head -5 | tr '\n' ' ' || true)
+          echo "::notice title=compiler warnings::total=$(grep -c 'warning:' pio.log || true) own_code=[${OWN}]"

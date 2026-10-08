@@ -33,6 +33,7 @@ class SdLogger {
   bool cardPresent() const { return cardPresent_; }
   bool fileOpen() const { return fileOpen_; }
   uint32_t failures() const { return failures_; }     // cumulative, never reset
+  bool gaveUp() const { return gaveUp_; }              // stopped logging for this session
   uint32_t rowsLogged() const { return rowsLogged_; }
   const char* fileName() const { return fileName_; }
 
