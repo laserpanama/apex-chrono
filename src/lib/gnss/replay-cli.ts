@@ -1,5 +1,5 @@
 /**
- * `npm run replay:gps -- <file.csv> [--track <id>]`
+ * `npm run replay:gps -- <file.csv> [--track <id> | --track-file <file.track>]`
  *
  * Replay a recorded GNSS CSV (contract §6) through the SAME `GpsLapEngine` a
  * live BN-880 session uses, and print:
@@ -11,6 +11,8 @@
  * Tracks are resolved from the recording's `# track=<id>` metadata line, or
  * overridden with `--track <id>` (synthetic tracks: club, street, fast).
  * If the file names no track and none is given, it defaults to `club`.
+ * A real circuit is given with `--track-file <file.track>` — the same `.track`
+ * text the device loads over serial (see track-file.ts).
  *
  * Determinism: the same file always yields the same laps — this is the tool
  * you use to prove a live session reproduced bit-for-bit on the desktop.
@@ -20,7 +22,8 @@ import { readFileSync } from "node:fs";
 import { TRACKS, getTrack } from "../timer/tracks.ts";
 import { compileTrack } from "./track.ts";
 import { geoTrackFromSynthetic } from "./synthetic.ts";
-import { replayRecording, type ReplayWarning } from "./recording.ts";
+import { parseTrackFile } from "./track-file.ts";
+import { parseRecording, replayRecording, type ReplayWarning } from "./recording.ts";
 import { formatLap } from "../timer/engine.ts";
 
 const fmtT = (t: number) => t.toFixed(3);
@@ -49,15 +52,33 @@ function main() {
   const argv = process.argv.slice(2);
   const file = argv[0];
   if (!file) {
-    console.error("usage: npm run replay:gps -- <file.csv> [--track club|street|fast]");
+    console.error(
+      "usage: npm run replay:gps -- <file.csv> [--track club|street|fast | --track-file <file.track>]",
+    );
     process.exit(2);
   }
-  let trackId = "club";
   const ti = argv.indexOf("--track");
-  if (ti >= 0 && argv[ti + 1]) trackId = argv[ti + 1];
+
+  const tf = argv.indexOf("--track-file");
+  const trackFile = tf >= 0 ? argv[tf + 1] : undefined;
+  if (tf >= 0 && !trackFile) {
+    console.error("--track-file needs a path");
+    process.exit(2);
+  }
 
   const text = readFileSync(file, "utf8");
-  const track = compileTrack(geoTrackFromSynthetic(getTrack(trackId)));
+  // --track wins, then the recording's own `# track=<id>` line, then `club`.
+  const metaTrack = parseRecording(text).meta.track;
+  const trackId = ti >= 0 && argv[ti + 1] ? argv[ti + 1] : (metaTrack ?? "club");
+  if (!trackFile && !TRACKS.some((t) => t.id === trackId)) {
+    console.error(
+      `unknown track "${trackId}" (built-in: ${TRACKS.map((t) => t.id).join(", ")}); use --track-file <file.track> for a real circuit`,
+    );
+    process.exit(2);
+  }
+  const track = trackFile
+    ? compileTrack(parseTrackFile(readFileSync(trackFile, "utf8"), trackFile))
+    : compileTrack(geoTrackFromSynthetic(getTrack(trackId)));
   const r = replayRecording(text, track);
 
   console.log(`Apex Chrono — GNSS replay of ${file}`);

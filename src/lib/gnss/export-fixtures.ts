@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TRACKS } from "../timer/tracks.ts";
 import { compileTrack } from "./track.ts";
+import { formatTrackFile } from "./track-file.ts";
 import { geoTrackFromSynthetic } from "./synthetic.ts";
 import { simulate, type SimConfig } from "./sim.ts";
 import { GpsLapEngine } from "./lap-engine.ts";
@@ -42,17 +43,7 @@ mkdirSync(OUT, { recursive: true });
 for (const sc of scenarios) {
   const def = geoTrackFromSynthetic(TRACKS.find((t) => t.id === sc.track)!);
   const ct = compileTrack(def);
-  const lines: string[] = [];
-  lines.push(`origin ${num(def.origin!.lat)} ${num(def.origin!.lon)}`);
-  lines.push(`centerline ${def.centerline.length}`);
-  for (const p of def.centerline) lines.push(`${num(p.lat)} ${num(p.lon)}`);
-  lines.push(`gates ${def.gates.length}`);
-  for (const g of def.gates) {
-    lines.push(
-      `${g.kind === "start_finish" ? "SF" : "SEC"} ${num(g.left.lat)} ${num(g.left.lon)} ${num(g.right.lat)} ${num(g.right.lon)}`,
-    );
-  }
-  writeFileSync(join(OUT, `${sc.name}.track`), lines.join("\n") + "\n");
+  writeFileSync(join(OUT, `${sc.name}.track`), formatTrackFile(def));
 
   const fixes: GnssFix[] = [];
   simulate(ct, sc.sim, (f) => fixes.push(f));

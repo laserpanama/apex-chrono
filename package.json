@@ -22,6 +22,7 @@
     "firmware:fixtures": "node --experimental-strip-types src/lib/gnss/export-fixtures.ts",
     "fixtures:recording": "node --experimental-strip-types src/lib/gnss/export-recording-fixtures.ts",
     "replay:gps": "node --experimental-strip-types src/lib/gnss/replay-cli.ts",
+    "track:check": "node --experimental-strip-types src/lib/gnss/track-cli.ts",
     "firmware:test": "npm run firmware:fixtures && mkdir -p firmware/test_host/build && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o firmware/test_host/build/parity firmware/test_host/parity.cpp && g++ -std=c++17 -O2 -Wall -Wextra -Werror -Ifirmware/lib/apex_display -Ifirmware/lib/apex_imu -Ifirmware/lib/apex_timer -Ifirmware/lib/apex_timing -o firmware/test_host/build/hw_test firmware/test_host/hw_test.cpp && firmware/test_host/build/parity && firmware/test_host/build/hw_test",
     "firmware:test:hw": "npm run firmware:fixtures && mkdir -p firmware/test_host/build && g++ -std=c++17 -O2 -Wall -Wextra -Werror -Ifirmware/lib/apex_display -Ifirmware/lib/apex_imu -Ifirmware/lib/apex_timer -Ifirmware/lib/apex_timing -o firmware/test_host/build/hw_test firmware/test_host/hw_test.cpp && firmware/test_host/build/hw_test",
     "lint": "eslint .",
