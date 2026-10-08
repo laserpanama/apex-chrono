@@ -55,9 +55,9 @@ function placeholderCardColor(site = {}) {
 }
 
 /**
- * "wild-race.grok.me" \u2192 "Wild Race". Only published app hosts encode the
+ * "wild-race.grok.me" → "Wild Race". Only published app hosts encode the
  * display name in the first label. Preview / guest hosts are image origins
- * only \u2014 slugifying them produced internal names like "Hds Abc 3000 Xy".
+ * only — slugifying them produced internal names like "Hds Abc 3000 Xy".
  */
 export function appNameFromHost(hostHeader) {
   const host = String(hostHeader ?? "")
@@ -108,7 +108,7 @@ export function publicAppHost(hostHeader) {
  * Published apps always use `VITE_PUBLIC_HOSTNAME` (the grok.me host the
  * deployer injects). Live preview has no such env, so fall back to the
  * request host / X-Forwarded-Host. Never prefer request Host on a published
- * app \u2014 Envoy rewrites it to `*.vercel.app`.
+ * app — Envoy rewrites it to `*.vercel.app`.
  */
 export function resolvePublicHost(hostHeader) {
   return (
@@ -156,7 +156,6 @@ export function renderInstallPageHtml(template, { host, url } = {}) {
     .replaceAll("{{APP_NAME}}", escapeHtml(appNameFromHost(host)))
     .replaceAll("{{APP_URL}}", escapeHtml(stripInstallParams(url)));
 }
-
 
 export function renderWebManifest(hostHeader) {
   const name = appNameFromHost(hostHeader);
@@ -233,7 +232,7 @@ export function grokXCreatorHeadTags(creator = readXCreator(), creatorId = readX
   ];
 }
 
-/** Platform "Created with Grok" banner \u2014 injected into every HTML document. */
+/** Platform "Created with Grok" banner — injected into every HTML document. */
 export function grokExtensionsHeadTags(projectId = readGrokProjectId()) {
   const id = escapeHtml(projectId);
   const tags = [];
@@ -327,7 +326,7 @@ export function siteHasCustomCard(site = {}) {
 /**
  * Preview: public/og.jpg|png on disk.
  * Vercel: the bake (`card=custom` / `image`) because the function cannot stat public/.
- * Otherwise empty \u2014 caller emits the og.grok.me placeholder.
+ * Otherwise empty — caller emits the og.grok.me placeholder.
  */
 export function resolveOgCardAsset(site = {}, cwd = process.cwd()) {
   return ogCardPublicPath(cwd) || (detectCustomOgCard(cwd, site) ? String(site.image ?? "").trim() || "/og.jpg" : "");
