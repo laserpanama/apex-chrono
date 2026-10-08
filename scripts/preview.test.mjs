@@ -84,7 +84,7 @@ test("parseListenerInodes reads the tcp6 dump the same way", () => {
 });
 
 // /proc/<pid>/cmdline is NUL-separated.
-const cmdline = (...argv) => argv.join("\\u0000");
+const cmdline = (...argv) => argv.join("\u0000");
 
 test("looksLikePreviewProcess matches the npm wrapper and its vite child", () => {
   const npmRun = cmdline("node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "run", "preview");
