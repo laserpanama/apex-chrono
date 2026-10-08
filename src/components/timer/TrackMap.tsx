@@ -94,7 +94,7 @@ export function TrackMap({ track, x, y, heading, distM, sectorIndex, armed, clas
         fontFamily="Barlow Condensed, sans-serif"
         letterSpacing="2"
       >
-        {track.name.toUpperCase()} \u00b7 {(distM / 1000).toFixed(2)} / {(track.lengthM / 1000).toFixed(2)} KM
+        {track.name.toUpperCase()} · {(distM / 1000).toFixed(2)} / {(track.lengthM / 1000).toFixed(2)} KM
       </text>
     </svg>
   );
